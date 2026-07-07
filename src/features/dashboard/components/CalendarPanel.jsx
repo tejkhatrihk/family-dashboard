@@ -155,7 +155,8 @@ function CustomToolbar({ label, onNavigate, onView, view }) {
 
 // ── component ──────────────────────────────────────────────────────────
 export default function CalendarPanel() {
-  const { accessToken, user, isSignedIn, login, logout } = useGoogleAuth();
+  const { accessToken, user, isSignedIn, sessionExpired, login, logout } =
+    useGoogleAuth();
 
   const [localEvents, setLocalEvents] = useState(loadLocalEvents);
   const [googleEvents, setGoogleEvents] = useState([]);
@@ -196,7 +197,8 @@ export default function CalendarPanel() {
       setGoogleEvents(events);
     } catch (err) {
       console.error("Failed to sync Google Calendar:", err);
-      if (err.message.includes("401")) logout();
+      if (err.message?.includes("401") || err.message?.includes("403"))
+        logout();
     } finally {
       setSyncing(false);
     }
@@ -275,6 +277,11 @@ export default function CalendarPanel() {
         await syncGoogle(); // Refresh from Google
       } catch (err) {
         console.error("Failed to save to Google:", err);
+        // 401 / 403 means the access token has expired — log out so the
+        // sign-in button reappears and the user can re-authenticate.
+        if (err.message?.includes("401") || err.message?.includes("403")) {
+          logout();
+        }
       }
     } else {
       // Save locally
@@ -426,11 +433,21 @@ export default function CalendarPanel() {
           ) : (
             <Chip
               icon={<GoogleIcon sx={{ fontSize: 16 }} />}
-              label="Sign in with Google"
+              label={
+                sessionExpired
+                  ? "Session expired — sign in again"
+                  : "Sign in with Google"
+              }
               size="small"
               variant="outlined"
               onClick={login}
-              sx={{ fontSize: "0.7rem" }}
+              sx={{
+                fontSize: "0.7rem",
+                ...(sessionExpired && {
+                  borderColor: "warning.main",
+                  color: "warning.main",
+                }),
+              }}
             />
           )}
           <Tooltip title="Quick add event">

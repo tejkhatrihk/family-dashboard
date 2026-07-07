@@ -1,23 +1,49 @@
+import RecipesPage from "@/features/recipes/pages/RecipesPage";
 import MenuPanel from "@/shared/components/MenuPanel";
 import { useState } from "react";
 import CalendarPanel from "../components/CalendarPanel";
 import ShoppingListPanel from "../components/ShoppingListPanel";
 
+import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
 import MenuIcon from "@mui/icons-material/Menu";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
 import {
   AppBar,
   Box,
+  Divider,
   Drawer,
   IconButton,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
   Paper,
   Toolbar,
   Typography,
 } from "@mui/material";
 
-const DRAWER_WIDTH = 360;
+const DRAWER_WIDTH = 260;
+
+const NAV_ITEMS = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: <CalendarTodayIcon fontSize="small" />,
+  },
+  { id: "recipes", label: "Recipes", icon: <MenuBookIcon fontSize="small" /> },
+];
 
 export default function Dashboard() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [currentView, setCurrentView] = useState("dashboard");
+
+  const navigate = (view) => {
+    setCurrentView(view);
+    setDrawerOpen(false);
+  };
+
+  const viewLabel =
+    NAV_ITEMS.find((n) => n.id === currentView)?.label ?? "Family Dashboard";
 
   return (
     <Box
@@ -45,12 +71,12 @@ export default function Dashboard() {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            Family Dashboard
+            {viewLabel}
           </Typography>
         </Toolbar>
       </AppBar>
 
-      {/* Sidebar drawer */}
+      {/* Navigation drawer */}
       <Drawer
         variant="temporary"
         open={drawerOpen}
@@ -59,45 +85,95 @@ export default function Dashboard() {
           "& .MuiDrawer-paper": {
             width: DRAWER_WIDTH,
             maxWidth: "85vw",
-            p: 2,
-            gap: 2,
             boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
           },
         }}
       >
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, px: 2, pt: 2, pb: 1 }}>
           Family Dashboard
         </Typography>
 
-        <MenuPanel />
-        <ShoppingListPanel />
+        {/* Nav links */}
+        <List disablePadding>
+          {NAV_ITEMS.map((item) => (
+            <ListItemButton
+              key={item.id}
+              selected={currentView === item.id}
+              onClick={() => navigate(item.id)}
+              sx={{ mx: 1, borderRadius: 1 }}
+            >
+              <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.label} />
+            </ListItemButton>
+          ))}
+        </List>
+
+        {/* Dashboard-only tools */}
+        {currentView === "dashboard" && (
+          <>
+            <Divider sx={{ my: 1 }} />
+            <Box
+              sx={{
+                flex: 1,
+                overflow: "auto",
+                px: 2,
+                pb: 2,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
+              <MenuPanel />
+              <Divider />
+              <ShoppingListPanel onAddRecipe={() => navigate("recipes")} />
+            </Box>
+          </>
+        )}
       </Drawer>
 
-      {/* Main content — full-screen calendar */}
+      {/* Main content */}
       <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
+        sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
       >
-        <Paper
-          elevation={0}
-          sx={{
-            flex: 1,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 2,
-            overflow: "hidden",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            m: 2,
-          }}
-        >
-          <CalendarPanel />
-        </Paper>
+        {currentView === "dashboard" && (
+          <Paper
+            elevation={0}
+            sx={{
+              flex: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 2,
+              overflow: "hidden",
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              m: 2,
+            }}
+          >
+            <CalendarPanel />
+          </Paper>
+        )}
+
+        {currentView === "recipes" && (
+          <Paper
+            elevation={0}
+            sx={{
+              flex: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 2,
+              overflow: "hidden",
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              m: 2,
+            }}
+          >
+            <RecipesPage />
+          </Paper>
+        )}
       </Box>
     </Box>
   );

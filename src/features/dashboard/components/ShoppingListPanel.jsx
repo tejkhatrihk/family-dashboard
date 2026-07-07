@@ -1,10 +1,24 @@
-export default function ShoppingListPanel() {
+import AddIcon from "@mui/icons-material/Add";
+import { Box, Button, Typography } from "@mui/material";
+
+export default function ShoppingListPanel({ onAddRecipe }) {
   return (
-    <div className="card">
-      <div className="card-title">Shopping List</div>
-      <div className="muted">
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        Shopping List
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
         This will auto-generate from selected recipes.
-      </div>
-    </div>
+      </Typography>
+      <Button
+        size="small"
+        variant="outlined"
+        startIcon={<AddIcon />}
+        onClick={onAddRecipe}
+        sx={{ alignSelf: "flex-start" }}
+      >
+        Add Recipe
+      </Button>
+    </Box>
   );
 }
