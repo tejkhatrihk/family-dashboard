@@ -131,12 +131,13 @@ export async function checkReminders(events) {
   }
 
   for (const event of events) {
-    const minutesBefore = reminders[event.id];
+    const reminderId = event.reminderId || event.recurrenceParentId || event.id;
+    const minutesBefore = reminders[reminderId];
     if (minutesBefore == null) continue;
 
     const eventStart = new Date(event.start).getTime();
     const triggerTime = eventStart - minutesBefore * 60 * 1000;
-    const firedKey = `${event.id}_${minutesBefore}`;
+    const firedKey = `${event.id}_${eventStart}_${minutesBefore}`;
     const minsUntilTrigger = Math.round((triggerTime - now) / 60000);
 
     console.debug(

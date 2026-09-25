@@ -1,19 +1,16 @@
-const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+import { buildGoogleRecurrence } from "./recurrenceService";
 
-// Parse family members from env: "Name:calendarId:color,Name2:calendarId2:color2"
-export function getFamilyMembers() {
-  const raw = import.meta.env.VITE_FAMILY_MEMBERS || "";
-  return raw
-    .split(",")
-    .filter(Boolean)
-    .map((entry) => {
-      const [name, calendarId, color] = entry.split(":");
-      return {
-        name,
-        calendarId: calendarId || "primary",
-        color: color || "#1a73e8",
-      };
-    });
+const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+const CHECKLIST_PROPERTY = "familyDashboardChecklist";
+
+function parseChecklist(item) {
+  try {
+    return JSON.parse(
+      item.extendedProperties?.private?.[CHECKLIST_PROPERTY] || "[]",
+    );
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -52,14 +49,43 @@ export async function fetchGoogleEvents(
     source: "google",
     calendarId,
     description: item.description || "",
+    checklist: parseChecklist(item),
+    recurrenceParentId: item.recurringEventId,
+    reminderId: item.recurringEventId || item.id,
   }));
+}
+
+function buildGoogleEventBody(event) {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const recurrence = buildGoogleRecurrence(event.recurrence);
+
+  return {
+    summary: event.title,
+    description: event.description || "",
+    extendedProperties: {
+      private: {
+        [CHECKLIST_PROPERTY]: JSON.stringify(event.checklist || []),
+      },
+    },
+    start: event.allDay
+      ? { date: formatDate(event.start) }
+      : { dateTime: event.start.toISOString(), ...(recurrence && { timeZone }) },
+    end: event.allDay
+      ? { date: formatDate(event.end) }
+      : { dateTime: event.end.toISOString(), ...(recurrence && { timeZone }) },
+    ...(recurrence && { recurrence }),
+  };
 }
 
 /**
  * Fetch events from ALL family calendars.
  */
-export async function fetchAllFamilyEvents(accessToken, timeMin, timeMax) {
-  const members = getFamilyMembers();
+export async function fetchAllFamilyEvents(
+  accessToken,
+  timeMin,
+  timeMax,
+  members,
+) {
   const results = await Promise.allSettled(
     members.map(async (member) => {
       const events = await fetchGoogleEvents(
@@ -68,8 +94,8 @@ export async function fetchAllFamilyEvents(accessToken, timeMin, timeMax) {
         timeMax,
         member.calendarId,
       );
-      return events.map((e) => ({
-        ...e,
+      return events.map((event) => ({
+        ...event,
         owner: member.name,
         color: member.color,
       }));
@@ -77,8 +103,8 @@ export async function fetchAllFamilyEvents(accessToken, timeMin, timeMax) {
   );
 
   return results
-    .filter((r) => r.status === "fulfilled")
-    .flatMap((r) => r.value);
+    .filter((result) => result.status === "fulfilled")
+    .flatMap((result) => result.value);
 }
 
 /**
@@ -89,16 +115,7 @@ export async function createGoogleEvent(
   event,
   calendarId = "primary",
 ) {
-  const body = {
-    summary: event.title,
-    description: event.description || "",
-    start: event.allDay
-      ? { date: formatDate(event.start) }
-      : { dateTime: event.start.toISOString() },
-    end: event.allDay
-      ? { date: formatDate(event.end) }
-      : { dateTime: event.end.toISOString() },
-  };
+  const body = buildGoogleEventBody(event);
 
   const encodedId = encodeURIComponent(calendarId);
   const res = await fetch(`${CALENDAR_API}/calendars/${encodedId}/events`, {
@@ -123,16 +140,7 @@ export async function updateGoogleEvent(
   event,
   calendarId = "primary",
 ) {
-  const body = {
-    summary: event.title,
-    description: event.description || "",
-    start: event.allDay
-      ? { date: formatDate(event.start) }
-      : { dateTime: event.start.toISOString() },
-    end: event.allDay
-      ? { date: formatDate(event.end) }
-      : { dateTime: event.end.toISOString() },
-  };
+  const body = buildGoogleEventBody(event);
 
   const encodedId = encodeURIComponent(calendarId);
   const res = await fetch(

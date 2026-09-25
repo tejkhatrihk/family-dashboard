@@ -18,16 +18,15 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useHouseholdMenu } from "../../features/dashboard/hooks/useHouseholdMenu";
+import {
+  MEAL_EMOJI,
+  MEAL_TYPES,
+  toDateKey,
+} from "../../features/dashboard/services/mealService";
 
 // ── helpers ────────────────────────────────────────────────────────────
-const MEAL_TYPES = ["Breakfast", "Lunch", "Kaira-Lunch", "Dinner"];
-const MEAL_EMOJI = {
-  Breakfast: "🍳",
-  Lunch: "🍛",
-  "Kaira-Lunch": "🥗",
-  Dinner: "🍽️",
-};
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** Return the Monday of the week that contains `date`. */
@@ -38,11 +37,6 @@ function getMonday(date) {
   d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
-}
-
-/** Format a Date to YYYY-MM-DD for use as a storage key. */
-function toKey(date) {
-  return date.toISOString().slice(0, 10);
 }
 
 /** Format the week range like "Feb 16 – 22, 2026". */
@@ -68,29 +62,11 @@ function formatDate(date) {
   });
 }
 
-const STORAGE_KEY = "family_weekly_menu";
-
-function loadMenu() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-
-function saveMenu(menu) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(menu));
-}
-
 // ── component ──────────────────────────────────────────────────────────
 export default function MenuPanel() {
-  const [menu, setMenu] = useState(loadMenu);
+  const { menu, setMeal } = useHouseholdMenu();
   const [weekOffset, setWeekOffset] = useState(0);
   const [view, setView] = useState("today"); // "today" | "week"
-
-  useEffect(() => {
-    saveMenu(menu);
-  }, [menu]);
 
   const monday = useMemo(() => {
     const m = getMonday(new Date());
@@ -112,8 +88,8 @@ export default function MenuPanel() {
       return DAY_LABELS.map((day, idx) => ({ day, idx }));
     }
     // "today" view — show only today (or the selected day when navigating)
-    const todayKey = toKey(new Date());
-    const todayIdx = weekDates.findIndex((d) => toKey(d) === todayKey);
+    const todayKey = toDateKey(new Date());
+    const todayIdx = weekDates.findIndex((d) => toDateKey(d) === todayKey);
     if (todayIdx !== -1) {
       return [{ day: DAY_LABELS[todayIdx], idx: todayIdx }];
     }
@@ -123,7 +99,7 @@ export default function MenuPanel() {
 
   const getValue = useCallback(
     (dayIdx, meal) => {
-      const key = toKey(weekDates[dayIdx]);
+      const key = toDateKey(weekDates[dayIdx]);
       return menu[key]?.[meal] || "";
     },
     [menu, weekDates],
@@ -131,16 +107,9 @@ export default function MenuPanel() {
 
   const setValue = useCallback(
     (dayIdx, meal, value) => {
-      const key = toKey(weekDates[dayIdx]);
-      setMenu((prev) => ({
-        ...prev,
-        [key]: {
-          ...prev[key],
-          [meal]: value,
-        },
-      }));
+      setMeal(weekDates[dayIdx], meal, value).catch(console.error);
     },
-    [weekDates],
+    [setMeal, weekDates],
   );
 
   const clearCell = useCallback(
@@ -277,7 +246,8 @@ export default function MenuPanel() {
               const dateStr = weekDates[dayIdx].toLocaleDateString("en-IN", {
                 day: "numeric",
               });
-              const isToday = toKey(weekDates[dayIdx]) === toKey(new Date());
+              const isToday =
+                toDateKey(weekDates[dayIdx]) === toDateKey(new Date());
               return (
                 <TableRow
                   key={day}

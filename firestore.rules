@@ -1,0 +1,85 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function householdAfter(householdId) {
+      return getAfter(/databases/$(database)/documents/households/$(householdId));
+    }
+
+    function isOwner(householdId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/households/$(householdId)).data.ownerId == request.auth.uid;
+    }
+
+    function isOwnerAfter(householdId) {
+      return signedIn() && householdAfter(householdId).data.ownerId == request.auth.uid;
+    }
+
+    function isMember(householdId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/households/$(householdId)/members/$(request.auth.uid));
+    }
+
+    function validInvite(householdId, memberId) {
+      let code = request.resource.data.inviteCode;
+      let invite = get(/databases/$(database)/documents/householdInvites/$(code));
+      return memberId == request.auth.uid
+        && invite.data.householdId == householdId
+        && invite.data.status == 'pending'
+        && invite.data.email == request.auth.token.email;
+    }
+
+    match /users/{userId} {
+      allow read, create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    match /households/{householdId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if isOwner(householdId) || isMember(householdId);
+      allow update, delete: if isOwner(householdId);
+
+      match /members/{memberId} {
+        allow read: if isOwner(householdId) || isMember(householdId);
+        allow create: if isOwnerAfter(householdId) || validInvite(householdId, memberId);
+        allow update: if isOwner(householdId)
+          || (signedIn()
+            && request.auth.uid == memberId
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.role == resource.data.role);
+        allow delete: if isOwner(householdId)
+          || (signedIn() && request.auth.uid == memberId);
+      }
+
+      match /menus/{dateKey} {
+        allow read, create, update, delete: if isMember(householdId);
+      }
+
+      match /recipes/{recipeId} {
+        allow read, create, update, delete: if isMember(householdId);
+      }
+
+      match /events/{eventId} {
+        allow read, create, update, delete: if isMember(householdId);
+      }
+    }
+
+    match /householdInvites/{inviteCode} {
+      allow create: if signedIn() && isOwner(request.resource.data.householdId);
+      allow read: if signedIn()
+        && (isOwner(resource.data.householdId)
+          || resource.data.email == request.auth.token.email);
+      allow update: if signedIn()
+        && (isOwner(resource.data.householdId)
+          || (resource.data.email == request.auth.token.email
+            && request.resource.data.status == 'accepted'
+            && request.resource.data.acceptedBy == request.auth.uid));
+      allow delete: if signedIn() && isOwner(resource.data.householdId);
+    }
+  }
+}

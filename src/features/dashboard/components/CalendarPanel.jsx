@@ -1,10 +1,11 @@
-import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
-import DeleteIcon from "@mui/icons-material/Delete";
+import AddIcon from "@mui/icons-material/Add";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import GoogleIcon from "@mui/icons-material/Google";
-import LogoutIcon from "@mui/icons-material/Logout";
+import MenuIcon from "@mui/icons-material/Menu";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
 import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
-import SyncIcon from "@mui/icons-material/Sync";
 import {
   Avatar,
   Box,
@@ -19,15 +20,21 @@ import {
   IconButton,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
+  Stack,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
 import {
+  addDays,
   addMonths,
   endOfMonth,
+  endOfWeek,
   format,
   getDay,
   parse,
@@ -36,25 +43,39 @@ import {
   subMonths,
 } from "date-fns";
 import { enIN } from "date-fns/locale";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
-import { useGoogleAuth } from "../../../shared/api/googleAuthContext";
+import { dashboardColors, getMemberPalette } from "../../../app/theme";
+import { useHousehold } from "../../household/api/householdContext";
+import { useGoogleCalendar } from "../../../shared/api/googleCalendarContext";
 import {
   createGoogleEvent,
   deleteGoogleEvent,
   fetchAllFamilyEvents,
-  getFamilyMembers,
   updateGoogleEvent,
 } from "../services/googleCalendarService";
+import {
+  getMealsForDate,
+  MEAL_EMOJI,
+} from "../services/mealService";
+import { useHouseholdMenu } from "../hooks/useHouseholdMenu";
+import { useHouseholdEvents } from "../hooks/useHouseholdEvents";
 import {
   checkReminders,
   getReminder,
   removeReminder,
   setReminder,
 } from "../services/reminderService";
+import {
+  expandRecurringEvents,
+  isRecurrenceValid,
+  updateRecurrenceForStartChange,
+} from "../services/recurrenceService";
+import AgendaView from "./AgendaView";
+import EventChecklistEditor from "./EventChecklistEditor";
+import RecurrenceFields from "./RecurrenceFields";
 
-// ── date-fns localizer ─────────────────────────────────────────────────
 const locales = { "en-IN": enIN };
 const localizer = dateFnsLocalizer({
   format,
@@ -64,632 +85,751 @@ const localizer = dateFnsLocalizer({
   locales,
 });
 
-// ── localStorage for local-only events ─────────────────────────────────
-const STORAGE_KEY = "family_calendar_events";
+const CALENDAR_VIEWS = [
+  { value: "agenda", label: "Agenda" },
+  { value: "week", label: "Week" },
+  { value: "wall", label: "Wall display" },
+];
 
-function loadLocalEvents() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-    return raw.map((e) => ({
-      ...e,
-      start: new Date(e.start),
-      end: new Date(e.end),
-      source: "local",
-    }));
-  } catch {
-    return [];
-  }
+function getAvailableFamilyMembers(householdMembers) {
+  return householdMembers.length
+    ? householdMembers.map((member) => ({
+        id: member.uid,
+        name: member.displayName,
+        email: member.email,
+        calendarId: member.calendarId || member.email || "primary",
+        color: member.color || dashboardColors.teal,
+      }))
+    : [{ name: "Family", calendarId: "primary", color: dashboardColors.teal }];
 }
 
-function saveLocalEvents(events) {
-  const localOnly = events.filter((e) => e.source === "local");
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(localOnly));
-}
-
-function newEvent(start, end) {
-  const members = getFamilyMembers();
+function createNewEvent(start, end, member) {
   return {
     id: `local_${Date.now()}`,
     title: "",
+    description: "",
+    checklist: [],
     start,
     end,
     allDay: false,
-    source: "local",
-    owner: members[0]?.name || "Family",
-    calendarId: members[0]?.calendarId || "primary",
-    color: members[0]?.color || "#43a047",
+    source: "household",
+    owner: member.name,
+    calendarId: member.calendarId,
+    color: member.color,
   };
 }
 
-// ── Custom toolbar ─────────────────────────────────────────────────────
-function CustomToolbar({ label, onNavigate, onView, view }) {
+function formatWeekRange(date) {
+  const firstDay = startOfWeek(date, { weekStartsOn: 1 });
+  const lastDay = endOfWeek(date, { weekStartsOn: 1 });
+  if (firstDay.getMonth() === lastDay.getMonth()) {
+    return `${format(firstDay, "MMM d")} – ${format(lastDay, "d")}`;
+  }
+  return `${format(firstDay, "MMM d")} – ${format(lastDay, "MMM d")}`;
+}
+
+function useCurrentTime() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  return now;
+}
+
+function FamilyPill({ member, familyMembers, active, onClick, compact = false }) {
+  const palette = getMemberPalette(familyMembers, member.name);
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: 1,
-        mb: 1,
-      }}
-    >
-      <Box sx={{ display: "flex", gap: 0.5 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => onNavigate("TODAY")}
+    <Chip
+      onClick={onClick}
+      avatar={
+        <Avatar
+          sx={{
+            bgcolor: `${palette.main} !important`,
+            color: "white !important",
+            width: compact ? 20 : 22,
+            height: compact ? 20 : 22,
+            fontSize: "0.68rem !important",
+            fontWeight: 800,
+          }}
         >
-          Today
-        </Button>
-        <Button size="small" variant="text" onClick={() => onNavigate("PREV")}>
-          ‹
-        </Button>
-        <Button size="small" variant="text" onClick={() => onNavigate("NEXT")}>
-          ›
-        </Button>
+          {member.name.slice(0, 1).toUpperCase()}
+        </Avatar>
+      }
+      label={member.name}
+      size="small"
+      sx={{
+        bgcolor: active ? palette.soft : "transparent",
+        color: active ? palette.main : "text.secondary",
+        opacity: active ? 1 : 0.55,
+        border: "1px solid transparent",
+        fontWeight: 650,
+        height: compact ? 32 : 34,
+        cursor: "pointer",
+        "&:hover": { bgcolor: palette.soft },
+      }}
+    />
+  );
+}
+
+function WeekCalendarEvent({ event, familyMembers }) {
+  const palette = getMemberPalette(familyMembers, event.owner);
+  return (
+    <Box sx={{ display: "flex", gap: 0.6, alignItems: "center", minWidth: 0 }}>
+      <Box
+        sx={{
+          width: 19,
+          height: 19,
+          borderRadius: "50%",
+          bgcolor: palette.main,
+          color: "white",
+          display: "grid",
+          placeItems: "center",
+          fontSize: "0.58rem",
+          fontWeight: 800,
+          flexShrink: 0,
+        }}
+      >
+        {(event.owner || "F").slice(0, 1).toUpperCase()}
       </Box>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        {label}
+      <Typography component="span" variant="caption" sx={{ fontWeight: 750 }} noWrap>
+        {event.title}
       </Typography>
-      <Box sx={{ display: "flex", gap: 0.5 }}>
-        {[
-          { key: Views.MONTH, label: "Month" },
-          { key: Views.WEEK, label: "Week" },
-          { key: Views.DAY, label: "Day" },
-          { key: Views.AGENDA, label: "Agenda" },
-        ].map((v) => (
-          <Button
-            key={v.key}
-            size="small"
-            variant={view === v.key ? "contained" : "outlined"}
-            onClick={() => onView(v.key)}
-          >
-            {v.label}
-          </Button>
-        ))}
-      </Box>
     </Box>
   );
 }
 
-// ── component ──────────────────────────────────────────────────────────
-export default function CalendarPanel() {
-  const { accessToken, user, isSignedIn, sessionExpired, login, logout } =
-    useGoogleAuth();
+function WallSidebar({
+  tomorrowMeals,
+  familyMembers,
+  hiddenMembers,
+  showFamily,
+  onToggleMember,
+  onAddEvent,
+}) {
+  return (
+    <Stack spacing={1.5} sx={{ width: 260, flexShrink: 0 }}>
+      <Paper elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
+        <Button fullWidth variant="contained" startIcon={<AddIcon />} onClick={onAddEvent} sx={{ minHeight: 48 }}>
+          Add event
+        </Button>
+      </Paper>
 
-  const [localEvents, setLocalEvents] = useState(loadLocalEvents);
+      <Paper elevation={0} sx={{ p: 1.75, border: "1px solid", borderColor: "divider" }}>
+        <Typography variant="body2" sx={{ fontWeight: 800 }}>
+          Tomorrow · {format(tomorrowMeals.date, "EEE d")}
+        </Typography>
+        {tomorrowMeals.meals.length ? (
+          <Stack spacing={0.85} sx={{ mt: 1.25 }}>
+            {tomorrowMeals.meals.map((meal) => (
+              <Box key={meal.type} sx={{ display: "flex", gap: 0.75, alignItems: "flex-start" }}>
+                <Box component="span" aria-hidden>{MEAL_EMOJI[meal.type]}</Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.1 }}>
+                    {meal.type}
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 650 }}>{meal.value}</Typography>
+                </Box>
+              </Box>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+            No meals planned yet
+          </Typography>
+        )}
+      </Paper>
+
+      {showFamily && (
+        <Paper elevation={0} sx={{ p: 1.75, border: "1px solid", borderColor: "divider" }}>
+          <Typography variant="body2" sx={{ fontWeight: 800, mb: 1 }}>
+            Family
+          </Typography>
+          <Stack spacing={0.75}>
+            {familyMembers.map((member) => (
+              <FamilyPill
+                key={member.name}
+                member={member}
+                familyMembers={familyMembers}
+                active={!hiddenMembers.has(member.name)}
+                onClick={() => onToggleMember(member.name)}
+                compact
+              />
+            ))}
+          </Stack>
+        </Paper>
+      )}
+    </Stack>
+  );
+}
+
+export default function CalendarPanel({ onOpenMenu }) {
+  const {
+    accessToken,
+    calendarConnected,
+    sessionExpired,
+    connectCalendar,
+    disconnectCalendar,
+  } = useGoogleCalendar();
+  const { members: householdMembers } = useHousehold();
+  const now = useCurrentTime();
+  const { menu } = useHouseholdMenu();
+  const {
+    events: householdEvents,
+    saveEvent: saveHouseholdEvent,
+    deleteEvent: deleteHouseholdEvent,
+  } = useHouseholdEvents();
+  const tomorrowMeals = useMemo(() => {
+    const date = addDays(now, 1);
+    return { date, meals: getMealsForDate(date, menu) };
+  }, [menu, now]);
+  const familyMembers = useMemo(
+    () => getAvailableFamilyMembers(householdMembers),
+    [householdMembers],
+  );
   const [googleEvents, setGoogleEvents] = useState([]);
   const [syncing, setSyncing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
-  const [currentView, setCurrentView] = useState(Views.WEEK);
+  const [currentView, setCurrentView] = useState("agenda");
   const [currentDate, setCurrentDate] = useState(new Date());
-
-  // Reminder state for the event being edited
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderMinutes, setReminderMinutes] = useState(15);
+  const [hiddenMembers, setHiddenMembers] = useState(() => new Set());
 
-  const familyMembers = getFamilyMembers();
-  const [visibleMembers, setVisibleMembers] = useState(
-    () => new Set(familyMembers.map((m) => m.name)),
+  const expandedLocalEvents = useMemo(() => {
+    const earliestRelevantDate = currentDate < now ? subMonths(currentDate, 2) : subMonths(now, 1);
+    const latestRelevantDate = currentDate > now ? addMonths(currentDate, 2) : addMonths(now, 2);
+    return expandRecurringEvents(
+      householdEvents,
+      earliestRelevantDate,
+      latestRelevantDate,
+    );
+  }, [householdEvents, currentDate, now]);
+
+  const allEvents = useMemo(
+    () => {
+      const mirroredGoogleIds = new Set(
+        householdEvents
+          .map((event) => event.googleEventId)
+          .filter(Boolean),
+      );
+      const externalGoogleEvents = calendarConnected
+        ? googleEvents.filter(
+            (event) =>
+              !mirroredGoogleIds.has(event.id) &&
+              !mirroredGoogleIds.has(event.recurrenceParentId),
+          )
+        : [];
+      return [...expandedLocalEvents, ...externalGoogleEvents]
+        .filter((event) => !hiddenMembers.has(event.owner))
+        .sort((a, b) => a.start - b.start);
+    },
+    [calendarConnected, expandedLocalEvents, googleEvents, hiddenMembers, householdEvents],
   );
 
-  // All events combined, filtered by visible members
-  const allEvents = [
-    ...localEvents,
-    ...googleEvents.filter((e) => visibleMembers.has(e.owner)),
-  ];
+  const selectedWeekEventCount = useMemo(() => {
+    const firstDay = startOfWeek(currentDate, { weekStartsOn: 1 });
+    const lastDay = endOfWeek(currentDate, { weekStartsOn: 1 });
+    return allEvents.filter((event) => event.start >= firstDay && event.start <= lastDay).length;
+  }, [allEvents, currentDate]);
 
-  // Persist local events
-  useEffect(() => {
-    saveLocalEvents(localEvents);
-  }, [localEvents]);
-
-  // Fetch Google Calendar events when signed in or date changes
   const syncGoogle = useCallback(async () => {
     if (!accessToken) return;
     setSyncing(true);
     try {
       const timeMin = subMonths(startOfMonth(currentDate), 1);
       const timeMax = addMonths(endOfMonth(currentDate), 1);
-      const events = await fetchAllFamilyEvents(accessToken, timeMin, timeMax);
-      setGoogleEvents(events);
-    } catch (err) {
-      console.error("Failed to sync Google Calendar:", err);
-      if (err.message?.includes("401") || err.message?.includes("403"))
-        logout();
+      setGoogleEvents(
+        await fetchAllFamilyEvents(accessToken, timeMin, timeMax, familyMembers),
+      );
+    } catch (error) {
+      console.error("Failed to sync Google Calendar:", error);
+      if (error.message?.includes("401") || error.message?.includes("403")) {
+        disconnectCalendar();
+      }
     } finally {
       setSyncing(false);
     }
-  }, [accessToken, currentDate, logout]);
+  }, [accessToken, currentDate, disconnectCalendar, familyMembers]);
 
   useEffect(() => {
-    if (isSignedIn) syncGoogle();
-  }, [isSignedIn, syncGoogle]);
+    if (calendarConnected) syncGoogle();
+  }, [calendarConnected, syncGoogle]);
 
-  // ── Background reminder checker (every 30s) ─────────────────────────
   const allEventsRef = useRef(allEvents);
   allEventsRef.current = allEvents;
-
   useEffect(() => {
-    const interval = setInterval(() => {
-      checkReminders(allEventsRef.current);
-    }, 30_000);
-    // Check immediately on mount
+    const interval = window.setInterval(() => checkReminders(allEventsRef.current), 30_000);
     checkReminders(allEventsRef.current);
-    return () => clearInterval(interval);
+    return () => window.clearInterval(interval);
   }, []);
 
-  // ── Event handlers ───────────────────────────────────────────────────
-  const handleSelectSlot = useCallback(({ start, end }) => {
-    setEditingEvent(newEvent(start, end));
-    setReminderEnabled(false);
-    setReminderMinutes(15);
-    setDialogOpen(true);
+  const toggleMember = useCallback((name) => {
+    setHiddenMembers((previous) => {
+      const next = new Set(previous);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
   }, []);
 
-  const handleSelectEvent = useCallback((event) => {
-    setEditingEvent({ ...event });
-    const existing = getReminder(event.id);
-    setReminderEnabled(existing != null);
-    setReminderMinutes(existing ?? 15);
-    setDialogOpen(true);
-  }, []);
+  const openNewEvent = useCallback(
+    (start = new Date(), end = null) => {
+      const eventEnd = end || new Date(start.getTime() + 60 * 60 * 1000);
+      setEditingEvent(createNewEvent(start, eventEnd, familyMembers[0]));
+      setReminderEnabled(false);
+      setReminderMinutes(15);
+      setDialogOpen(true);
+    },
+    [familyMembers],
+  );
+
+  const handleSelectSlot = useCallback(
+    ({ start, end }) => openNewEvent(start, end),
+    [openNewEvent],
+  );
+
+  const handleSelectEvent = useCallback(
+    (event) => {
+      const eventToEdit = event.recurrenceParentId
+        ? householdEvents.find((candidate) => candidate.id === event.recurrenceParentId) || event
+        : event;
+      setEditingEvent({ ...eventToEdit, checklist: eventToEdit.checklist || [] });
+      const existingReminder = getReminder(event.reminderId || eventToEdit.id);
+      setReminderEnabled(existingReminder != null);
+      setReminderMinutes(existingReminder ?? 15);
+      setDialogOpen(true);
+    },
+    [householdEvents],
+  );
+
+  const canSave =
+    Boolean(editingEvent?.title?.trim()) &&
+    editingEvent?.end > editingEvent?.start &&
+    isRecurrenceValid(editingEvent);
 
   const handleSave = useCallback(async () => {
-    if (!editingEvent?.title?.trim()) return;
+    if (!canSave) return;
+    const eventToSave = {
+      ...editingEvent,
+      title: editingEvent.title.trim(),
+      checklist: (editingEvent.checklist || []).filter((item) => item.text?.trim()),
+    };
 
-    if (isSignedIn && accessToken) {
-      // Save to Google Calendar
+    if (eventToSave.source === "google") {
+      if (!calendarConnected || !accessToken) return;
       try {
-        let savedEventId = editingEvent.id;
-        if (editingEvent.source === "google") {
-          await updateGoogleEvent(
-            accessToken,
-            editingEvent.id,
-            editingEvent,
-            editingEvent.calendarId,
-          );
-        } else {
-          const member = familyMembers.find(
-            (m) => m.name === editingEvent.owner,
-          );
-          const created = await createGoogleEvent(
-            accessToken,
-            editingEvent,
-            member?.calendarId || "primary",
-          );
-          savedEventId = created.id; // Use the Google-assigned ID
-          // Remove from local if it was local
-          setLocalEvents((prev) =>
-            prev.filter((e) => e.id !== editingEvent.id),
-          );
-        }
-
-        // Save or remove reminder using the final event ID
-        if (reminderEnabled) {
-          setReminder(savedEventId, reminderMinutes);
-        } else {
-          removeReminder(savedEventId);
-        }
-
-        await syncGoogle(); // Refresh from Google
-      } catch (err) {
-        console.error("Failed to save to Google:", err);
-        // 401 / 403 means the access token has expired — log out so the
-        // sign-in button reappears and the user can re-authenticate.
-        if (err.message?.includes("401") || err.message?.includes("403")) {
-          logout();
-        }
+        await updateGoogleEvent(
+          accessToken,
+          eventToSave.id,
+          eventToSave,
+          eventToSave.calendarId,
+        );
+        const reminderId = eventToSave.reminderId || eventToSave.id;
+        if (reminderEnabled) setReminder(reminderId, reminderMinutes);
+        else removeReminder(reminderId);
+        await syncGoogle();
+      } catch (error) {
+        console.error("Failed to update Google event:", error);
+        if (error.message?.includes("401")) disconnectCalendar();
+        return;
       }
     } else {
-      // Save locally
-      const exists = localEvents.find((e) => e.id === editingEvent.id);
-      if (exists) {
-        setLocalEvents((prev) =>
-          prev.map((e) => (e.id === editingEvent.id ? editingEvent : e)),
-        );
-      } else {
-        setLocalEvents((prev) => [...prev, editingEvent]);
+      let sharedEvent = { ...eventToSave, source: "household" };
+
+      if (calendarConnected && accessToken) {
+        try {
+          const member = familyMembers.find(
+            (candidate) => candidate.name === eventToSave.owner,
+          );
+          const googleCalendarId =
+            sharedEvent.googleCalendarId || member?.calendarId || "primary";
+
+          if (sharedEvent.googleEventId) {
+            await updateGoogleEvent(
+              accessToken,
+              sharedEvent.googleEventId,
+              sharedEvent,
+              googleCalendarId,
+            );
+          } else {
+            const created = await createGoogleEvent(
+              accessToken,
+              sharedEvent,
+              googleCalendarId,
+            );
+            sharedEvent = {
+              ...sharedEvent,
+              googleEventId: created.id,
+              googleCalendarId,
+            };
+          }
+        } catch (error) {
+          console.error(
+            "Google sync failed; the event was still saved to the household:",
+            error,
+          );
+          if (error.message?.includes("401")) disconnectCalendar();
+        }
       }
 
-      // Save or remove reminder
-      if (reminderEnabled) {
-        setReminder(editingEvent.id, reminderMinutes);
-      } else {
-        removeReminder(editingEvent.id);
+      try {
+        await saveHouseholdEvent(sharedEvent);
+        if (reminderEnabled) setReminder(sharedEvent.id, reminderMinutes);
+        else removeReminder(sharedEvent.id);
+        if (calendarConnected) await syncGoogle();
+      } catch (error) {
+        console.error("Failed to save household event:", error);
+        return;
       }
     }
-
     setDialogOpen(false);
     setEditingEvent(null);
   }, [
-    editingEvent,
-    localEvents,
-    isSignedIn,
     accessToken,
-    syncGoogle,
+    calendarConnected,
+    canSave,
+    disconnectCalendar,
+    editingEvent,
+    familyMembers,
     reminderEnabled,
     reminderMinutes,
+    saveHouseholdEvent,
+    syncGoogle,
   ]);
 
   const handleDelete = useCallback(async () => {
-    if (editingEvent.source === "google" && accessToken) {
+    if (editingEvent.source === "google") {
+      if (!accessToken) return;
       try {
-        await deleteGoogleEvent(
-          accessToken,
-          editingEvent.id,
-          editingEvent.calendarId,
-        );
+        await deleteGoogleEvent(accessToken, editingEvent.id, editingEvent.calendarId);
         await syncGoogle();
-      } catch (err) {
-        console.error("Failed to delete from Google:", err);
+      } catch (error) {
+        console.error("Failed to delete from Google:", error);
+        return;
       }
     } else {
-      setLocalEvents((prev) => prev.filter((e) => e.id !== editingEvent.id));
+      if (editingEvent.googleEventId && accessToken) {
+        try {
+          await deleteGoogleEvent(
+            accessToken,
+            editingEvent.googleEventId,
+            editingEvent.googleCalendarId || editingEvent.calendarId,
+          );
+        } catch (error) {
+          console.error("Failed to delete the Google Calendar copy:", error);
+        }
+      }
+      await deleteHouseholdEvent(editingEvent.id);
+      removeReminder(editingEvent.id);
     }
     setDialogOpen(false);
     setEditingEvent(null);
-  }, [editingEvent, accessToken, syncGoogle]);
+  }, [editingEvent, accessToken, deleteHouseholdEvent, syncGoogle]);
 
-  const handleClose = () => {
-    setDialogOpen(false);
-    setEditingEvent(null);
+  const navigateWeek = (direction) => {
+    setCurrentDate((previous) => addDays(previous, direction * 7));
   };
+  const isExistingEvent =
+    editingEvent?.source === "google" ||
+    householdEvents.some((event) => event.id === editingEvent?.id);
 
   return (
-    <Box
-      sx={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-      }}
-    >
-      {/* Header */}
-      <Box
-        sx={{
-          p: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <Box>
-          <Typography
-            variant="subtitle1"
-            sx={{ fontWeight: 700, lineHeight: 1.2 }}
-          >
-            Calendar
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {allEvents.length} event{allEvents.length !== 1 ? "s" : ""}
-            {isSignedIn && " · Google synced"}
-          </Typography>
-          {isSignedIn && (
-            <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 0.5 }}>
-              {familyMembers.map((m) => (
-                <Chip
-                  key={m.name}
-                  label={m.name}
-                  size="small"
-                  sx={{
-                    fontSize: "0.7rem",
-                    bgcolor: visibleMembers.has(m.name)
-                      ? m.color
-                      : "transparent",
-                    color: visibleMembers.has(m.name)
-                      ? "#fff"
-                      : "text.secondary",
-                    border: `1px solid ${m.color}`,
-                    cursor: "pointer",
-                  }}
-                  onClick={() =>
-                    setVisibleMembers((prev) => {
-                      const next = new Set(prev);
-                      next.has(m.name) ? next.delete(m.name) : next.add(m.name);
-                      return next;
-                    })
-                  }
-                />
-              ))}
+    <Box sx={{ minHeight: "100%", bgcolor: "background.default", display: "flex", flexDirection: "column" }}>
+      <Box component="header" sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+        <Box sx={{ px: { xs: 1.5, sm: 2 }, py: 1.8, display: "flex", flexDirection: { xs: "column", sm: "row" }, alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between", gap: { xs: 1.25, sm: 2 } }}>
+          <Box sx={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+            <IconButton aria-label="Open menu" onClick={onOpenMenu} sx={{ mr: 0.5 }}>
+              <MenuIcon />
+            </IconButton>
+            <Box>
+              <Typography variant="h4" sx={{ fontSize: { xs: "1.55rem", sm: "1.72rem" }, lineHeight: 1.05 }}>
+                Dashboard
+              </Typography>
+              <Tooltip title={calendarConnected ? "Sync calendar now" : "Calendar is stored on this device"}>
+                <Typography
+                  component={calendarConnected ? "button" : "p"}
+                  type={calendarConnected ? "button" : undefined}
+                  onClick={calendarConnected ? syncGoogle : undefined}
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, p: 0, border: 0, bgcolor: "transparent", fontFamily: "inherit", cursor: calendarConnected ? "pointer" : "default" }}
+                >
+                  {selectedWeekEventCount} event{selectedWeekEventCount === 1 ? "" : "s"}
+                  {calendarConnected ? ` · ${syncing ? "Syncing…" : "Google synced"}` : " · Calendar not connected"}
+                </Typography>
+              </Tooltip>
             </Box>
-          )}
+          </Box>
+          <Box sx={{ display: "flex", gap: 0.8, alignItems: "center", overflowX: "auto", pb: 0.25, justifyContent: { xs: "flex-start", sm: "flex-end" } }}>
+            {!calendarConnected && (
+              <Chip
+                icon={<GoogleIcon sx={{ fontSize: 16 }} />}
+                label={sessionExpired ? "Reconnect calendar" : "Connect calendar"}
+                onClick={connectCalendar}
+                variant="outlined"
+                sx={{ fontWeight: 650, flexShrink: 0 }}
+              />
+            )}
+            {familyMembers.map((member) => (
+              <FamilyPill
+                key={member.name}
+                member={member}
+                familyMembers={familyMembers}
+                active={!hiddenMembers.has(member.name)}
+                onClick={() => toggleMember(member.name)}
+              />
+            ))}
+          </Box>
         </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          {isSignedIn ? (
-            <>
-              <Tooltip title="Sync now">
-                <IconButton
-                  size="small"
-                  onClick={syncGoogle}
-                  disabled={syncing}
-                >
-                  <SyncIcon
-                    fontSize="small"
-                    sx={{
-                      animation: syncing ? "spin 1s linear infinite" : "none",
-                    }}
-                  />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title={`Signed in as ${user?.email || "Google"}`}>
-                <Avatar
-                  src={user?.picture}
-                  sx={{ width: 24, height: 24, fontSize: "0.7rem" }}
-                >
-                  {user?.name?.[0] || "G"}
-                </Avatar>
-              </Tooltip>
-              <Tooltip title="Sign out">
-                <IconButton size="small" onClick={logout}>
-                  <LogoutIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </>
-          ) : (
-            <Chip
-              icon={<GoogleIcon sx={{ fontSize: 16 }} />}
-              label={
-                sessionExpired
-                  ? "Session expired — sign in again"
-                  : "Sign in with Google"
-              }
-              size="small"
-              variant="outlined"
-              onClick={login}
+
+        <Box
+          sx={{
+            minHeight: 66,
+            px: { xs: 1.5, sm: 2 },
+            py: 1.25,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr auto", md: "1fr auto 1fr" },
+            alignItems: "center",
+            gap: 1.5,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0, gridColumn: 1, gridRow: 1 }}>
+            <Button variant="outlined" size="small" onClick={() => setCurrentDate(new Date())} sx={{ borderColor: "divider", color: "text.primary", bgcolor: "white" }}>
+              Today
+            </Button>
+            <IconButton size="small" aria-label="Previous week" onClick={() => navigateWeek(-1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
+              <ChevronLeftIcon fontSize="small" />
+            </IconButton>
+            <IconButton size="small" aria-label="Next week" onClick={() => navigateWeek(1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
+              <ChevronRightIcon fontSize="small" />
+            </IconButton>
+            <Typography variant="body2" sx={{ fontWeight: 800, ml: 0.4, whiteSpace: "nowrap" }}>
+              {formatWeekRange(currentDate)}
+            </Typography>
+          </Box>
+
+          <ToggleButtonGroup
+            exclusive
+            value={currentView}
+            onChange={(_, value) => value && setCurrentView(value)}
+            size="small"
+            aria-label="Calendar view"
+            sx={{
+              gridColumn: { xs: "1 / -1", md: 2 },
+              gridRow: { xs: 2, md: 1 },
+              justifySelf: "center",
+              p: 0.45,
+              bgcolor: dashboardColors.softSurface,
+              borderRadius: 1.25,
+              "& .MuiToggleButton-root": { border: 0, borderRadius: "7px !important", px: { xs: 1.5, sm: 2.2 }, py: 0.45, color: "text.secondary", fontWeight: 700 },
+              "& .Mui-selected": { bgcolor: "white !important", color: `${dashboardColors.ink} !important`, boxShadow: "0 1px 4px rgba(30, 35, 30, 0.14)" },
+            }}
+          >
+            {CALENDAR_VIEWS.map((view) => (
+              <ToggleButton key={view.value} value={view.value}>{view.label}</ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+
+          {currentView !== "wall" && (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => openNewEvent()}
+              aria-label="Add event"
               sx={{
-                fontSize: "0.7rem",
-                ...(sessionExpired && {
-                  borderColor: "warning.main",
-                  color: "warning.main",
-                }),
-              }}
-            />
-          )}
-          <Tooltip title="Quick add event">
-            <IconButton
-              size="small"
-              onClick={() => {
-                const now = new Date();
-                const end = new Date(now);
-                end.setHours(end.getHours() + 1);
-                setEditingEvent(newEvent(now, end));
-                setDialogOpen(true);
+                justifySelf: "end",
+                gridColumn: { xs: 2, md: 3 },
+                gridRow: 1,
+                display: { xs: "none", sm: "inline-flex" },
+                minWidth: { xs: 42, sm: 112 },
+                width: { xs: 42, sm: "auto" },
+                px: { xs: 1, sm: 2 },
+                "& .MuiButton-startIcon": { m: { xs: 0, sm: "0 8px 0 -4px" } },
               }}
             >
-              <AddCircleOutlineIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+              <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+                Add event
+              </Box>
+            </Button>
+          )}
         </Box>
       </Box>
 
-      {/* Calendar */}
-      <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          p: 1,
-          "@keyframes spin": {
-            from: { transform: "rotate(0deg)" },
-            to: { transform: "rotate(360deg)" },
-          },
-          "& .rbc-calendar": { height: "100%" },
-          "& .rbc-header": { fontWeight: 600, fontSize: "0.8rem", py: 0.5 },
-          "& .rbc-today": { bgcolor: "action.hover" },
-          "& .rbc-event": {
-            borderRadius: "4px !important",
-            border: "none !important",
-            fontSize: "0.75rem",
-          },
-          "& .rbc-show-more": { color: "primary.main", fontSize: "0.75rem" },
-        }}
-      >
-        <Calendar
-          localizer={localizer}
-          events={allEvents}
-          startAccessor="start"
-          endAccessor="end"
-          selectable
-          onSelectSlot={handleSelectSlot}
-          onSelectEvent={handleSelectEvent}
-          view={currentView}
-          onView={setCurrentView}
-          date={currentDate}
-          onNavigate={setCurrentDate}
-          views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
-          step={30}
-          timeslots={2}
-          style={{ height: "100%" }}
-          components={{ toolbar: CustomToolbar }}
-          eventPropGetter={(event) => {
-            const member = familyMembers.find((m) => m.name === event.owner);
-            return {
-              style: {
-                backgroundColor:
-                  member?.color ||
-                  (event.source === "google" ? "#1a73e8" : "#43a047"),
-                borderRadius: 4,
-                border: "none",
-                fontSize: "0.75rem",
-              },
-            };
-          }}
-        />
+      <Box component="main" sx={{ flex: 1, minHeight: 0 }}>
+        {currentView === "agenda" && (
+          <Box sx={{ width: "100%", maxWidth: 860, mx: "auto", px: { xs: 1.5, sm: 2 }, py: 2.5 }}>
+            <AgendaView events={allEvents} familyMembers={familyMembers} currentDate={currentDate} now={now} onSelectEvent={handleSelectEvent} />
+          </Box>
+        )}
+
+        {currentView === "week" && (
+          <Box
+            sx={{
+              height: { xs: "calc(100vh - 224px)", md: "calc(100vh - 158px)" },
+              minHeight: 520,
+              px: { xs: 0.75, sm: 2 },
+              py: 1.5,
+              "& .rbc-calendar": { fontFamily: "inherit" },
+              "& .rbc-time-view": { borderColor: "divider", bgcolor: "white", borderRadius: 1, overflow: "hidden" },
+              "& .rbc-header": { py: 1, borderColor: "divider", fontSize: "0.78rem", fontWeight: 750, color: "text.secondary" },
+              "& .rbc-header.rbc-today": { color: "primary.main", bgcolor: dashboardColors.tealSoft },
+              "& .rbc-time-header-content, & .rbc-timeslot-group, & .rbc-day-slot, & .rbc-time-content > * + * > *": { borderColor: `${dashboardColors.divider} !important` },
+              "& .rbc-timeslot-group": { minHeight: 52 },
+              "& .rbc-day-slot .rbc-time-slot": { borderTopColor: "#f2efe9" },
+              "& .rbc-label": { color: "text.secondary", fontSize: "0.68rem" },
+              "& .rbc-today": { bgcolor: "#fafcfb" },
+              "& .rbc-current-time-indicator": { bgcolor: "error.main", height: 2, zIndex: 5 },
+              "& .rbc-event": { p: 0.6, borderRadius: "5px !important", boxShadow: "none" },
+            }}
+          >
+            <Calendar
+              localizer={localizer}
+              events={allEvents}
+              startAccessor="start"
+              endAccessor="end"
+              selectable
+              toolbar={false}
+              view={Views.WEEK}
+              date={currentDate}
+              onNavigate={setCurrentDate}
+              onSelectSlot={handleSelectSlot}
+              onSelectEvent={handleSelectEvent}
+              step={30}
+              timeslots={2}
+              min={new Date(1970, 0, 1, 5, 0)}
+              max={new Date(1970, 0, 1, 23, 0)}
+              scrollToTime={new Date(1970, 0, 1, 7, 0)}
+              components={{ event: (props) => <WeekCalendarEvent {...props} familyMembers={familyMembers} /> }}
+              eventPropGetter={(event) => {
+                const palette = getMemberPalette(familyMembers, event.owner);
+                return { style: { backgroundColor: palette.soft, color: dashboardColors.ink, border: 0, borderLeft: `3px solid ${palette.main}` } };
+              }}
+            />
+          </Box>
+        )}
+
+        {currentView === "wall" && (
+          <Box sx={{ width: "100%", maxWidth: 900, mx: "auto", px: { xs: 1.5, sm: 2 }, py: 2.5, display: "flex", gap: 2.5, alignItems: "flex-start" }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <AgendaView events={allEvents} familyMembers={familyMembers} currentDate={currentDate} now={now} onSelectEvent={handleSelectEvent} focusUpcoming />
+            </Box>
+            <Box sx={{ display: { xs: "none", md: "block" } }}>
+              <WallSidebar
+                tomorrowMeals={tomorrowMeals}
+                familyMembers={familyMembers}
+                hiddenMembers={hiddenMembers}
+                showFamily
+                onToggleMember={toggleMember}
+                onAddEvent={() => openNewEvent()}
+              />
+            </Box>
+          </Box>
+        )}
       </Box>
 
-      {/* Add / Edit dialog */}
-      <Dialog open={dialogOpen} onClose={handleClose} maxWidth="xs" fullWidth>
+      <Button
+        variant="contained"
+        startIcon={<AddIcon />}
+        onClick={() => openNewEvent()}
+        sx={{
+          display: {
+            xs: "inline-flex",
+            sm: currentView === "wall" ? "inline-flex" : "none",
+            md: "none",
+          },
+          position: "fixed",
+          right: 18,
+          bottom: 18,
+          zIndex: 10,
+          borderRadius: 8,
+          px: 2.2,
+          boxShadow: "0 8px 24px rgba(31, 64, 57, 0.24)",
+        }}
+      >
+        Add event
+      </Button>
+
+      <Dialog open={dialogOpen} onClose={() => { setDialogOpen(false); setEditingEvent(null); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ pb: 1 }}>
-          {editingEvent?.source === "google"
-            ? "Edit Google Event"
-            : editingEvent && localEvents.find((e) => e.id === editingEvent.id)
-              ? "Edit Event"
-              : "New Event"}
-          {editingEvent?.source === "google" && (
-            <Chip
-              label="Google"
-              size="small"
-              sx={{ ml: 1, fontSize: "0.65rem" }}
-              color="primary"
-            />
-          )}
+          <Typography component="span" variant="h6" sx={{ fontWeight: 800 }}>
+            {isExistingEvent ? "Edit event" : "Add event"}
+          </Typography>
+          {editingEvent?.source === "google" && <Chip label="Google" size="small" color="primary" sx={{ ml: 1, height: 22 }} />}
         </DialogTitle>
-        <DialogContent
-          sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}
-        >
-          <TextField
-            autoFocus
-            label="Event title"
-            value={editingEvent?.title || ""}
-            onChange={(e) =>
-              setEditingEvent((prev) => ({ ...prev, title: e.target.value }))
-            }
-            fullWidth
-            size="small"
-            sx={{ mt: 1 }}
-          />
+        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, pt: "8px !important" }}>
+          <TextField autoFocus label="Event title" value={editingEvent?.title || ""} onChange={(e) => setEditingEvent((previous) => ({ ...previous, title: e.target.value }))} fullWidth size="small" />
           <FormControl fullWidth size="small">
             <InputLabel>Person</InputLabel>
             <Select
               value={editingEvent?.owner || ""}
               label="Person"
               onChange={(e) => {
-                const member = familyMembers.find(
-                  (m) => m.name === e.target.value,
-                );
-                setEditingEvent((prev) => ({
-                  ...prev,
-                  owner: member.name,
-                  calendarId: member.calendarId,
-                  color: member.color,
-                }));
+                const member = familyMembers.find((candidate) => candidate.name === e.target.value);
+                setEditingEvent((previous) => ({ ...previous, owner: member.name, calendarId: member.calendarId, color: member.color }));
               }}
             >
-              {familyMembers.map((m) => (
-                <MenuItem key={m.name} value={m.name}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: "50%",
-                        bgcolor: m.color,
-                      }}
-                    />
-                    {m.name}
-                  </Box>
-                </MenuItem>
-              ))}
+              {familyMembers.map((member) => {
+                const palette = getMemberPalette(familyMembers, member.name);
+                return (
+                  <MenuItem key={member.name} value={member.name}>
+                    <Box sx={{ width: 11, height: 11, borderRadius: "50%", bgcolor: palette.main, mr: 1 }} />
+                    {member.name}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
-          <TextField
-            label="Start"
-            type="datetime-local"
-            value={
-              editingEvent
-                ? format(editingEvent.start, "yyyy-MM-dd'T'HH:mm")
-                : ""
-            }
-            onChange={(e) =>
-              setEditingEvent((prev) => ({
-                ...prev,
-                start: new Date(e.target.value),
-              }))
-            }
-            fullWidth
-            size="small"
-            InputLabelProps={{ shrink: true }}
-          />
-          <TextField
-            label="End"
-            type="datetime-local"
-            value={
-              editingEvent ? format(editingEvent.end, "yyyy-MM-dd'T'HH:mm") : ""
-            }
-            onChange={(e) =>
-              setEditingEvent((prev) => ({
-                ...prev,
-                end: new Date(e.target.value),
-              }))
-            }
-            fullWidth
-            size="small"
-            InputLabelProps={{ shrink: true }}
-          />
-
-          {/* Reminder toggle */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              flexWrap: "wrap",
-            }}
-          >
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
+            <TextField
+              label="Start"
+              type="datetime-local"
+              value={editingEvent ? format(editingEvent.start, "yyyy-MM-dd'T'HH:mm") : ""}
+              onChange={(e) => {
+                const nextStart = new Date(e.target.value);
+                setEditingEvent((previous) => ({ ...previous, start: nextStart, recurrence: updateRecurrenceForStartChange(previous.recurrence, previous.start, nextStart) }));
+              }}
+              fullWidth
+              size="small"
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="End"
+              type="datetime-local"
+              value={editingEvent ? format(editingEvent.end, "yyyy-MM-dd'T'HH:mm") : ""}
+              onChange={(e) => setEditingEvent((previous) => ({ ...previous, end: new Date(e.target.value) }))}
+              fullWidth
+              size="small"
+              error={Boolean(editingEvent && editingEvent.end <= editingEvent.start)}
+              helperText={editingEvent && editingEvent.end <= editingEvent.start ? "End must be after start" : ""}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+          <RecurrenceFields event={editingEvent} onChange={setEditingEvent} />
+          <TextField label="Notes (optional)" value={editingEvent?.description || ""} onChange={(e) => setEditingEvent((previous) => ({ ...previous, description: e.target.value }))} multiline minRows={2} fullWidth size="small" />
+          <EventChecklistEditor value={editingEvent?.checklist || []} onChange={(checklist) => setEditingEvent((previous) => ({ ...previous, checklist }))} />
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
             <FormControlLabel
-              control={
-                <Switch
-                  checked={reminderEnabled}
-                  onChange={(e) => setReminderEnabled(e.target.checked)}
-                  size="small"
-                />
-              }
+              control={<Switch checked={reminderEnabled} onChange={(e) => setReminderEnabled(e.target.checked)} size="small" />}
               label={
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                  {reminderEnabled ? (
-                    <NotificationsActiveIcon
-                      sx={{ fontSize: 16, color: "primary.main" }}
-                    />
-                  ) : (
-                    <NotificationsOffIcon
-                      sx={{ fontSize: 16, color: "text.disabled" }}
-                    />
-                  )}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.6 }}>
+                  {reminderEnabled ? <NotificationsActiveIcon sx={{ fontSize: 17, color: "primary.main" }} /> : <NotificationsOffIcon sx={{ fontSize: 17, color: "text.disabled" }} />}
                   <Typography variant="body2">Reminder</Typography>
                 </Box>
               }
             />
             {reminderEnabled && (
-              <TextField
-                label="Minutes before"
-                type="number"
-                value={reminderMinutes}
-                onChange={(e) =>
-                  setReminderMinutes(
-                    Math.max(1, parseInt(e.target.value, 10) || 15),
-                  )
-                }
-                size="small"
-                sx={{ width: 130 }}
-                inputProps={{ min: 1 }}
-              />
+              <TextField label="Minutes before" type="number" value={reminderMinutes} onChange={(e) => setReminderMinutes(Math.max(1, Number.parseInt(e.target.value, 10) || 15))} size="small" sx={{ width: 145 }} inputProps={{ min: 1 }} />
             )}
           </Box>
         </DialogContent>
-        <DialogActions>
-          {editingEvent &&
-            (editingEvent.source === "google" ||
-              localEvents.find((e) => e.id === editingEvent.id)) && (
-              <IconButton
-                color="error"
-                onClick={handleDelete}
-                sx={{ mr: "auto" }}
-              >
-                <DeleteIcon />
-              </IconButton>
-            )}
-          <Button onClick={handleClose}>Cancel</Button>
-          <Button
-            onClick={handleSave}
-            variant="contained"
-            disabled={!editingEvent?.title?.trim()}
-          >
-            {isSignedIn ? "Save to Google" : "Save Locally"}
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          {isExistingEvent && <IconButton color="error" onClick={handleDelete} aria-label="Delete event" sx={{ mr: "auto" }}><DeleteOutlineIcon /></IconButton>}
+          <Button onClick={() => { setDialogOpen(false); setEditingEvent(null); }} color="inherit">Cancel</Button>
+          <Button onClick={handleSave} variant="contained" disabled={!canSave}>{isExistingEvent ? "Save changes" : "Add event"}</Button>
         </DialogActions>
       </Dialog>
     </Box>

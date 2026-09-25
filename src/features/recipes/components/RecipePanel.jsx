@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import IngredientEditor from './IngredientEditor';
 
 const EMPTY_RECIPE = {
@@ -42,12 +42,6 @@ export default function RecipePanel({
   const isNew = !recipe;
   const [editing, setEditing] = useState(isNew);
   const [draft, setDraft] = useState(recipe ?? EMPTY_RECIPE);
-
-  // Sync when the recipe prop changes (e.g. dialog opens with a different recipe).
-  useEffect(() => {
-    setDraft(recipe ?? EMPTY_RECIPE);
-    setEditing(!recipe);
-  }, [recipe]);
 
   const handleSave = () => {
     if (!draft.name.trim()) return;

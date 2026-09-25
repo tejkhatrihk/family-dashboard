@@ -1,116 +1,120 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useGoogleAuth } from '../../../shared/api/googleAuthContext';
-import { loadFromDrive, saveToDrive } from '../services/googleDriveRecipeService';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useHousehold } from "../../household/api/householdContext";
+import { firestore } from "../../../shared/api/firebaseClient";
 
-const LOCAL_KEY = 'family_recipes';
+const LOCAL_KEY = "family_recipes";
 
 function readLocal() {
-  try { return JSON.parse(localStorage.getItem(LOCAL_KEY)) || []; }
-  catch { return []; }
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_KEY)) || [];
+  } catch {
+    return [];
+  }
 }
 
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
-
-/**
- * Hook that exposes recipe list state and CRUD helpers.
- * Persists to Google Drive when signed in; falls back to localStorage otherwise.
- * Automatically migrates existing localStorage recipes to Drive on first sign-in.
- */
 export function useRecipes() {
-  const { accessToken, isSignedIn } = useGoogleAuth();
+  const { householdId } = useHousehold();
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const migrationAttempted = useRef(false);
 
-  // Stable refs so callbacks stay referentially stable across token/sign-in changes
-  const tokenRef = useRef(accessToken);
-  tokenRef.current = accessToken;
-  const signedInRef = useRef(isSignedIn);
-  signedInRef.current = isSignedIn;
-  const recipesRef = useRef(recipes);
-  recipesRef.current = recipes;
-
-  // Load recipes whenever sign-in state changes
   useEffect(() => {
-    let cancelled = false;
+    if (!householdId) return undefined;
+    const recipesCollection = collection(
+      firestore,
+      "households",
+      householdId,
+      "recipes",
+    );
+    return onSnapshot(
+      recipesCollection,
+      (snapshot) => {
+        const sharedRecipes = snapshot.docs.map((recipe) => ({
+          id: recipe.id,
+          ...recipe.data(),
+        }));
+        setRecipes(sharedRecipes);
+        setLoading(false);
 
-    async function load() {
-      setLoading(true);
-
-      if (!isSignedIn) {
-        if (!cancelled) { setRecipes(readLocal()); setLoading(false); }
-        return;
-      }
-
-      try {
-        let data = await loadFromDrive(accessToken);
-        if (cancelled) return;
-
-        if (data === null) {
-          // First sign-in — migrate any localStorage recipes up to Drive
-          const local = readLocal();
-          if (local.length > 0) await saveToDrive(accessToken, local);
-          data = local;
+        if (!sharedRecipes.length && !migrationAttempted.current) {
+          migrationAttempted.current = true;
+          const localRecipes = readLocal();
+          Promise.all(
+            localRecipes.map((recipe) => {
+              const recipeRef = recipe.id
+                ? doc(recipesCollection, recipe.id)
+                : doc(recipesCollection);
+              return setDoc(recipeRef, {
+                ...recipe,
+                migratedAt: serverTimestamp(),
+              });
+            }),
+          ).catch(console.error);
         }
+      },
+      (error) => {
+        console.error("Failed to load household recipes:", error);
+        setLoading(false);
+      },
+    );
+  }, [householdId]);
 
-        setRecipes(data);
-      } catch (err) {
-        console.error('Failed to load recipes from Drive, using localStorage:', err);
-        if (!cancelled) setRecipes(readLocal());
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+  const save = useCallback(
+    (recipe) => {
+      const recipesCollection = collection(
+        firestore,
+        "households",
+        householdId,
+        "recipes",
+      );
+      const recipeRef = recipe.id
+        ? doc(recipesCollection, recipe.id)
+        : doc(recipesCollection);
+      const now = new Date().toISOString();
+      const saved = {
+        ...recipe,
+        id: recipeRef.id,
+        updatedAt: now,
+        ...(!recipe.id && { createdAt: now }),
+      };
+      setRecipes((previous) => {
+        const exists = previous.some((item) => item.id === saved.id);
+        return exists
+          ? previous.map((item) => (item.id === saved.id ? saved : item))
+          : [...previous, saved];
+      });
+      return setDoc(recipeRef, saved, { merge: true });
+    },
+    [householdId],
+  );
 
-    load();
-    return () => { cancelled = true; };
-  }, [accessToken, isSignedIn]);
-
-  /** Write updated recipe list to state + backing store (optimistic). */
-  const persist = useCallback((updated) => {
-    setRecipes(updated);
-    if (signedInRef.current) {
-      saveToDrive(tokenRef.current, updated).catch(console.error);
-    } else {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(updated));
-    }
-  }, []);
-
-  const save = useCallback((recipe) => {
-    const now = new Date().toISOString();
-    const prev = recipesRef.current;
-
-    let updated;
-    if (recipe.id) {
-      const idx = prev.findIndex((r) => r.id === recipe.id);
-      const saved = { ...recipe, updatedAt: now };
-      updated = idx >= 0
-        ? [...prev.slice(0, idx), saved, ...prev.slice(idx + 1)]
-        : [...prev, saved];
-    } else {
-      updated = [...prev, { ...recipe, id: generateId(), createdAt: now, updatedAt: now }];
-    }
-
-    persist(updated);
-  }, [persist]);
-
-  const remove = useCallback((id) => {
-    persist(recipesRef.current.filter((r) => r.id !== id));
-  }, [persist]);
+  const remove = useCallback(
+    (id) => {
+      setRecipes((previous) => previous.filter((recipe) => recipe.id !== id));
+      return deleteDoc(
+        doc(firestore, "households", householdId, "recipes", id),
+      );
+    },
+    [householdId],
+  );
 
   const refresh = useCallback(async () => {
-    if (signedInRef.current) {
-      try {
-        const data = await loadFromDrive(tokenRef.current);
-        setRecipes(data ?? []);
-      } catch (err) {
-        console.error('Refresh failed:', err);
-      }
-    } else {
-      setRecipes(readLocal());
-    }
-  }, []);
+    const snapshot = await getDocs(
+      collection(firestore, "households", householdId, "recipes"),
+    );
+    setRecipes(
+      snapshot.docs.map((recipe) => ({ id: recipe.id, ...recipe.data() })),
+    );
+  }, [householdId]);
 
   return { recipes, loading, save, remove, refresh };
 }

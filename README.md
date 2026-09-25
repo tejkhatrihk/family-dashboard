@@ -1,16 +1,58 @@
-# React + Vite
+# Family Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A responsive household dashboard with account-based and managed family profiles, Google Calendar integration, recurring events, meals, recipes, and reminders.
 
-Currently, two official plugins are available:
+See [ARCHITECTURE_AND_DATA.md](./ARCHITECTURE_AND_DATA.md) for the complete data model, privacy boundaries, cost model, sign-in flow, Google Calendar behavior, setup instructions, and production checklist.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Household events, meal plans, recipes, member profiles, and invitations are stored in Cloud Firestore. Existing browser-local events, meals, and recipes are migrated into the first household automatically when its shared collections are empty.
 
-## React Compiler
+## Firebase setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Create a Firebase project at [console.firebase.google.com](https://console.firebase.google.com/).
+2. Add a Web app to the project and copy its configuration values.
+3. In **Authentication → Sign-in method**, enable Google.
+4. Create a Cloud Firestore database in production mode.
+5. Copy `.env.example` to `.env` and enter the Firebase web configuration.
+6. Install the Firebase CLI and authenticate:
 
-## Expanding the ESLint configuration
+   ```sh
+   npm install -g firebase-tools
+   firebase login
+   firebase use --add
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+7. Deploy the Firestore rules and required index:
+
+   ```sh
+   firebase deploy --only firestore
+   ```
+
+Do not use Firestore test-mode rules for a deployed app. The included rules isolate household data to authenticated household members.
+
+## Google Calendar setup
+
+Calendar access is separate from dashboard sign-in. Users can enter the dashboard with basic Google identity permissions and choose **Connect Google Calendar** later.
+
+1. Enable the Google Calendar API in the same Google Cloud project.
+2. Create a Web OAuth client.
+3. Add `http://localhost:5174` and the deployed domain to Authorized JavaScript origins.
+4. Configure the OAuth audience as External. While testing, add each tester under **Google Auth Platform → Audience → Test users**.
+5. Put the OAuth client ID in `.env` as `VITE_GOOGLE_CLIENT_ID`.
+
+For a household to see each member's events, members must share the relevant Google calendars with one another. Each new member's calendar ID defaults to their Google email address.
+
+Dashboard events are always saved to Firestore, so they remain visible to household members who have not connected Calendar. When Calendar is connected, new dashboard events are also mirrored to the selected member's Google calendar. External Google events are visible only while that user has Calendar connected.
+
+## Development
+
+```sh
+npm install
+npm run dev
+```
+
+## Verification
+
+```sh
+npm run lint
+npm run build
+```

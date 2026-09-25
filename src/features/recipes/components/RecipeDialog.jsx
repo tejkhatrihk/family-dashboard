@@ -46,6 +46,7 @@ export default function RecipeDialog({ open, onClose, recipe = null, onSave }) {
 
       <DialogContent sx={{ pt: 2 }}>
         <RecipePanel
+          key={recipe?.id || "new-recipe"}
           recipe={recipe}
           onSave={handleSave}
           onCancel={onClose}

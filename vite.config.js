@@ -1,6 +1,9 @@
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 import path from 'path'
 import { defineConfig } from 'vite'
+
+const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -11,7 +14,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      '@': path.resolve(currentDirectory, 'src'),
     },
   },
 })
