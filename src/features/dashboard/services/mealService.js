@@ -82,15 +82,36 @@ export async function setHouseholdChildMeal(
   );
 }
 
-export async function migrateLocalMenu(householdId) {
+export async function migrateLocalMenu(householdId, existingMenu = {}) {
   const localMenu = loadMenu();
   await Promise.all(
-    Object.entries(localMenu).map(([dateKey, meals]) =>
-      setDoc(
-        doc(firestore, "households", householdId, "menus", dateKey),
-        { ...meals, updatedAt: serverTimestamp() },
-        { merge: true },
-      ),
-    ),
+    Object.entries(localMenu).map(([dateKey, meals]) => {
+      const currentMeals = existingMenu[dateKey] || {};
+      const missingMeals = {};
+      for (const [mealType, entry] of Object.entries(meals)) {
+        if (mealType === "childMeals" && entry && typeof entry === "object") {
+          const missingChildMeals = Object.fromEntries(
+            Object.entries(entry).filter(
+              ([childId]) =>
+                !Object.hasOwn(currentMeals.childMeals || {}, childId),
+            ),
+          );
+          if (Object.keys(missingChildMeals).length) {
+            missingMeals.childMeals = missingChildMeals;
+          }
+        } else if (!Object.hasOwn(currentMeals, mealType)) {
+          missingMeals[mealType] = entry;
+        }
+      }
+
+      return Object.keys(missingMeals).length
+        ? setDoc(
+            doc(firestore, "households", householdId, "menus", dateKey),
+            { ...missingMeals, updatedAt: serverTimestamp() },
+            { merge: true },
+          )
+        : Promise.resolve();
+    }),
   );
+  localStorage.removeItem(MENU_STORAGE_KEY);
 }

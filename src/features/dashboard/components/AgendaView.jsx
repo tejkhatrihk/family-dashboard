@@ -23,7 +23,6 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dashboardColors, getMemberPalette } from "../../../app/theme";
 import { toDateKey } from "../services/mealService";
-import { getReminder } from "../services/reminderService";
 
 const INITIAL_PAST_DAYS = 14;
 const INITIAL_FUTURE_DAYS = 20;
@@ -62,7 +61,14 @@ function MemberBadge({ members, owner, size = 30 }) {
   );
 }
 
-function EventCard({ event, familyMembers, now, onSelect, onUpdateChecklist }) {
+function EventCard({
+  event,
+  familyMembers,
+  now,
+  reminders,
+  onSelect,
+  onUpdateChecklist,
+}) {
   const happeningNow = now >= event.start && now < event.end;
   const hasEnded = event.end < now;
   const [checklistOpen, setChecklistOpen] = useState(false);
@@ -70,7 +76,8 @@ function EventCard({ event, familyMembers, now, onSelect, onUpdateChecklist }) {
   const completedCount = checklist.filter((item) => item.completed).length;
   const remainingCount = checklist.length - completedCount;
   const progress = checklist.length ? (completedCount / checklist.length) * 100 : 0;
-  const reminderMinutes = getReminder(event.reminderId || event.recurrenceParentId || event.id);
+  const reminderMinutes =
+    reminders[event.reminderId || event.recurrenceParentId || event.id];
   const leaveBy = reminderMinutes ? subMinutes(event.start, reminderMinutes) : null;
 
   const updateChecklistItem = (itemIndex, completed) => {
@@ -311,7 +318,17 @@ function DayTasks({ tasks, familyMembers, onToggle }) {
   );
 }
 
-function DayGroup({ date, events, tasks, familyMembers, now, onSelect, onToggleTask, onUpdateEventChecklist }) {
+function DayGroup({
+  date,
+  events,
+  tasks,
+  familyMembers,
+  now,
+  reminders,
+  onSelect,
+  onToggleTask,
+  onUpdateEventChecklist,
+}) {
   const today = isSameDay(date, now);
   return (
     <Box component="section">
@@ -339,6 +356,7 @@ function DayGroup({ date, events, tasks, familyMembers, now, onSelect, onToggleT
               event={event}
               familyMembers={familyMembers}
               now={now}
+              reminders={reminders}
               onSelect={onSelect}
               onUpdateChecklist={onUpdateEventChecklist}
             />
@@ -369,6 +387,7 @@ function TimeGroupedAgenda({
   familyMembers,
   currentDate,
   now,
+  reminders,
   onSelectEvent,
   onUpdateEventChecklist,
   onSelectDate,
@@ -412,6 +431,7 @@ function TimeGroupedAgenda({
                 event={event}
                 familyMembers={familyMembers}
                 now={now}
+                reminders={reminders}
                 onSelect={onSelectEvent}
                 onUpdateChecklist={onUpdateEventChecklist}
               />
@@ -555,6 +575,7 @@ function useEndlessAgenda(anchorDate, onRangeChange) {
 export default function AgendaView({
   events,
   tasks = [],
+  reminders = {},
   familyMembers,
   currentDate,
   now,
@@ -587,6 +608,7 @@ export default function AgendaView({
         familyMembers={familyMembers}
         currentDate={currentDate}
         now={now}
+        reminders={reminders}
         onSelectEvent={onSelectEvent}
         onUpdateEventChecklist={onUpdateEventChecklist}
         onSelectDate={onSelectDate}
@@ -684,6 +706,7 @@ export default function AgendaView({
               tasks={groupedTasks.get(dateKey) || []}
               familyMembers={familyMembers}
               now={now}
+              reminders={reminders}
               onSelect={onSelectEvent}
               onToggleTask={onToggleTask}
               onUpdateEventChecklist={onUpdateEventChecklist}

@@ -72,21 +72,30 @@ export function useHouseholdEvents() {
         setEvents(sharedEvents);
         setLoading(false);
 
-        if (!sharedEvents.length && !migrationAttempted.current) {
+        if (!migrationAttempted.current) {
           migrationAttempted.current = true;
+          const existingIds = new Set(sharedEvents.map((event) => event.id));
           Promise.all(
-            readLegacyEvents().map((legacyEvent) => {
-              const eventRef = doc(eventsCollection, legacyEvent.id);
-              return setDoc(
-                eventRef,
-                eventDocument({
-                  ...legacyEvent,
-                  start: new Date(legacyEvent.start),
-                  end: new Date(legacyEvent.end),
-                }),
-              );
-            }),
-          ).catch(console.error);
+            readLegacyEvents()
+              .filter((legacyEvent) => !existingIds.has(legacyEvent.id))
+              .map((legacyEvent) => {
+                const eventRef = legacyEvent.id
+                  ? doc(eventsCollection, legacyEvent.id)
+                  : doc(eventsCollection);
+                return setDoc(
+                  eventRef,
+                  eventDocument({
+                    ...legacyEvent,
+                    start: new Date(legacyEvent.start),
+                    end: new Date(legacyEvent.end),
+                  }),
+                );
+              }),
+          )
+            .then(() => localStorage.removeItem(LEGACY_STORAGE_KEY))
+            .catch((error) => {
+              console.error("Failed to migrate local events:", error);
+            });
         }
       },
       (error) => {

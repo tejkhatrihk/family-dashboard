@@ -24,7 +24,9 @@ export function useHouseholdMenu() {
         setLoading(false);
         if (!Object.keys(nextMenu).length && !migrationAttempted.current) {
           migrationAttempted.current = true;
-          migrateLocalMenu(householdId).catch(console.error);
+          migrateLocalMenu(householdId, nextMenu).catch((error) => {
+            console.error("Failed to migrate local menu:", error);
+          });
         }
       },
       (error) => {

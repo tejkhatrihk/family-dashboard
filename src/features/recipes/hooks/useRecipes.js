@@ -45,20 +45,27 @@ export function useRecipes() {
         setRecipes(sharedRecipes);
         setLoading(false);
 
-        if (!sharedRecipes.length && !migrationAttempted.current) {
+        if (!migrationAttempted.current) {
           migrationAttempted.current = true;
           const localRecipes = readLocal();
+          const existingIds = new Set(sharedRecipes.map((recipe) => recipe.id));
           Promise.all(
-            localRecipes.map((recipe) => {
-              const recipeRef = recipe.id
-                ? doc(recipesCollection, recipe.id)
-                : doc(recipesCollection);
-              return setDoc(recipeRef, {
-                ...recipe,
-                migratedAt: serverTimestamp(),
-              });
-            }),
-          ).catch(console.error);
+            localRecipes
+              .filter((recipe) => !recipe.id || !existingIds.has(recipe.id))
+              .map((recipe) => {
+                const recipeRef = recipe.id
+                  ? doc(recipesCollection, recipe.id)
+                  : doc(recipesCollection);
+                return setDoc(recipeRef, {
+                  ...recipe,
+                  migratedAt: serverTimestamp(),
+                });
+              }),
+          )
+            .then(() => localStorage.removeItem(LOCAL_KEY))
+            .catch((error) => {
+              console.error("Failed to migrate local recipes:", error);
+            });
         }
       },
       (error) => {

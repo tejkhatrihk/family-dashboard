@@ -2,93 +2,87 @@ import { GoogleOAuthProvider, useGoogleLogin } from "@react-oauth/google";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFirebaseAuth } from "./firebaseAuthContext";
 import { GoogleCalendarContext } from "./googleCalendarContext";
+import {
+  clearGoogleCalendarToken,
+  loadActiveGoogleCalendarToken,
+  storeGoogleCalendarToken,
+} from "./googleCalendarTokenStorage";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const SCOPES = import.meta.env.VITE_GOOGLE_CALENDAR_SCOPES;
 const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;
 
-function getTokenKey(userId) {
-  return `google_calendar_access_token_${userId}`;
-}
-
-function getExpiryKey(userId) {
-  return `google_calendar_token_expires_at_${userId}`;
-}
-
-function clearLegacyLocalTokens() {
-  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-    const key = localStorage.key(index);
-    if (
-      key?.startsWith("google_calendar_access_token_") ||
-      key?.startsWith("google_calendar_token_expires_at_")
-    ) {
-      localStorage.removeItem(key);
-    }
-  }
-}
-
-function loadActiveToken(userId) {
-  clearLegacyLocalTokens();
-  if (!userId) return null;
-  const tokenKey = getTokenKey(userId);
-  const expiryKey = getExpiryKey(userId);
-  const token = sessionStorage.getItem(tokenKey);
-  const expiresAt = Number(sessionStorage.getItem(expiryKey) || 0);
-  if (!token || (expiresAt && Date.now() >= expiresAt)) {
-    sessionStorage.removeItem(tokenKey);
-    sessionStorage.removeItem(expiryKey);
-    return null;
-  }
-  return token;
-}
-
 function GoogleCalendarInner({ children, userId }) {
-  const tokenKey = getTokenKey(userId);
-  const expiryKey = getExpiryKey(userId);
-  const [accessToken, setAccessToken] = useState(() => loadActiveToken(userId));
-  const [sessionExpired, setSessionExpired] = useState(false);
+  const [tokenState, setTokenState] = useState(() => {
+    const activeToken = loadActiveGoogleCalendarToken(userId);
+    return {
+      userId,
+      token: activeToken?.token || null,
+      expiresAt: activeToken?.expiresAt || null,
+    };
+  });
+  const activeTokenState =
+    tokenState.userId === userId
+      ? tokenState
+      : {
+          userId,
+          ...(loadActiveGoogleCalendarToken(userId) || {}),
+        };
+  const accessToken = activeTokenState.token || null;
 
-  const connectCalendar = useGoogleLogin({
+  const renewCalendarAccess = useGoogleLogin({
     scope: SCOPES,
     onSuccess: (tokenResponse) => {
-      const expiresAt = Date.now() + (tokenResponse.expires_in ?? 3600) * 1000;
-      setAccessToken(tokenResponse.access_token);
-      setSessionExpired(false);
-      sessionStorage.setItem(tokenKey, tokenResponse.access_token);
-      sessionStorage.setItem(expiryKey, String(expiresAt));
+      const expiresAt = storeGoogleCalendarToken(
+        userId,
+        tokenResponse.access_token,
+        tokenResponse.expires_in ?? 3600,
+      );
+      setTokenState({
+        userId,
+        token: tokenResponse.access_token,
+        expiresAt,
+      });
     },
-    onError: (error) => console.error("Google Calendar connection failed:", error),
+    onError: (error) => console.error("Google Calendar authorization failed:", error),
   });
 
-  const disconnectCalendar = useCallback(() => {
-    setAccessToken(null);
-    setSessionExpired(false);
-    sessionStorage.removeItem(tokenKey);
-    sessionStorage.removeItem(expiryKey);
-  }, [expiryKey, tokenKey]);
+  const expireCalendarAccess = useCallback(() => {
+    clearGoogleCalendarToken(userId);
+    setTokenState({ userId, token: null, expiresAt: null });
+  }, [userId]);
 
   useEffect(() => {
+    const syncToken = () => {
+      const activeToken = loadActiveGoogleCalendarToken(userId);
+      setTokenState({
+        userId,
+        token: activeToken?.token || null,
+        expiresAt: activeToken?.expiresAt || null,
+      });
+    };
+    window.addEventListener("google-calendar-token-changed", syncToken);
     const interval = window.setInterval(() => {
-      const expiresAt = Number(sessionStorage.getItem(expiryKey) || 0);
-      if (expiresAt && Date.now() >= expiresAt) {
-        sessionStorage.removeItem(tokenKey);
-        sessionStorage.removeItem(expiryKey);
-        setAccessToken(null);
-        setSessionExpired(true);
+      const currentToken = loadActiveGoogleCalendarToken(userId);
+      if (!currentToken) {
+        expireCalendarAccess();
       }
     }, EXPIRY_CHECK_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [expiryKey, tokenKey]);
+    return () => {
+      window.removeEventListener("google-calendar-token-changed", syncToken);
+      window.clearInterval(interval);
+    };
+  }, [expireCalendarAccess, userId]);
 
   const value = useMemo(
     () => ({
       accessToken,
       calendarConnected: Boolean(accessToken),
-      sessionExpired,
-      connectCalendar,
-      disconnectCalendar,
+      canRenewCalendarAccess: Boolean(CLIENT_ID && SCOPES),
+      renewCalendarAccess,
+      expireCalendarAccess,
     }),
-    [accessToken, connectCalendar, disconnectCalendar, sessionExpired],
+    [accessToken, expireCalendarAccess, renewCalendarAccess],
   );
 
   return <GoogleCalendarContext.Provider value={value}>{children}</GoogleCalendarContext.Provider>;
@@ -102,9 +96,9 @@ export default function GoogleCalendarProvider({ children }) {
         value={{
           accessToken: null,
           calendarConnected: false,
-          sessionExpired: false,
-          connectCalendar: () => {},
-          disconnectCalendar: () => {},
+          canRenewCalendarAccess: false,
+          renewCalendarAccess: () => {},
+          expireCalendarAccess: () => {},
         }}
       >
         {children}

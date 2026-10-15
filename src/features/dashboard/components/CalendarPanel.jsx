@@ -74,12 +74,10 @@ import {
 } from "../services/mealService";
 import { useHouseholdMenu } from "../hooks/useHouseholdMenu";
 import { useHouseholdEvents } from "../hooks/useHouseholdEvents";
+import { useEventReminders } from "../hooks/useEventReminders";
 import { useHouseholdTasks } from "../../tasks/hooks/useHouseholdTasks";
 import {
   checkReminders,
-  getReminder,
-  removeReminder,
-  setReminder,
 } from "../services/reminderService";
 import {
   expandRecurringEvents,
@@ -348,13 +346,18 @@ export default function CalendarPanel({ onOpenMenu }) {
   const {
     accessToken,
     calendarConnected,
-    sessionExpired,
-    connectCalendar,
-    disconnectCalendar,
+    canRenewCalendarAccess,
+    renewCalendarAccess,
+    expireCalendarAccess,
   } = useGoogleCalendar();
   const { household, members: householdMembers } = useHousehold();
   const now = useCurrentTime();
   const { menu } = useHouseholdMenu();
+  const {
+    reminders: eventReminders,
+    setReminder,
+    removeReminder,
+  } = useEventReminders();
   const {
     events: householdEvents,
     saveEvent: saveHouseholdEvent,
@@ -466,12 +469,12 @@ export default function CalendarPanel({ onOpenMenu }) {
     } catch (error) {
       console.error("Failed to sync Google Calendar:", error);
       if (error.message?.includes("401") || error.message?.includes("403")) {
-        disconnectCalendar();
+        expireCalendarAccess();
       }
     } finally {
       setSyncing(false);
     }
-  }, [accessToken, currentDate, disconnectCalendar, familyMembers]);
+  }, [accessToken, currentDate, expireCalendarAccess, familyMembers]);
 
   useEffect(() => {
     if (calendarConnected) syncGoogle();
@@ -479,9 +482,13 @@ export default function CalendarPanel({ onOpenMenu }) {
 
   const allEventsRef = useRef(allEvents);
   allEventsRef.current = allEvents;
+  const eventRemindersRef = useRef(eventReminders);
+  eventRemindersRef.current = eventReminders;
   useEffect(() => {
-    const interval = window.setInterval(() => checkReminders(allEventsRef.current), 30_000);
-    checkReminders(allEventsRef.current);
+    const check = () =>
+      checkReminders(allEventsRef.current, eventRemindersRef.current);
+    const interval = window.setInterval(check, 30_000);
+    check();
     return () => window.clearInterval(interval);
   }, []);
 
@@ -516,12 +523,13 @@ export default function CalendarPanel({ onOpenMenu }) {
         ? householdEvents.find((candidate) => candidate.id === event.recurrenceParentId) || event
         : event;
       setEditingEvent({ ...eventToEdit, checklist: eventToEdit.checklist || [] });
-      const existingReminder = getReminder(event.reminderId || eventToEdit.id);
+      const existingReminder =
+        eventReminders[event.reminderId || eventToEdit.id];
       setReminderEnabled(existingReminder != null);
       setReminderMinutes(existingReminder ?? 15);
       setDialogOpen(true);
     },
-    [householdEvents],
+    [eventReminders, householdEvents],
   );
 
   const handleUseQuickAddDraft = useCallback(
@@ -552,7 +560,7 @@ export default function CalendarPanel({ onOpenMenu }) {
           await syncGoogle();
         } catch (error) {
           console.error("Failed to update the event checklist:", error);
-          if (error.message?.includes("401")) disconnectCalendar();
+          if (error.message?.includes("401")) expireCalendarAccess();
         }
         return;
       }
@@ -575,14 +583,14 @@ export default function CalendarPanel({ onOpenMenu }) {
           await syncGoogle();
         } catch (error) {
           console.error("Failed to sync the event checklist to Google:", error);
-          if (error.message?.includes("401")) disconnectCalendar();
+          if (error.message?.includes("401")) expireCalendarAccess();
         }
       }
     },
     [
       accessToken,
       calendarConnected,
-      disconnectCalendar,
+      expireCalendarAccess,
       householdEvents,
       saveHouseholdEvent,
       syncGoogle,
@@ -617,12 +625,15 @@ export default function CalendarPanel({ onOpenMenu }) {
           eventToSave.calendarId,
         );
         const reminderId = eventToSave.reminderId || eventToSave.id;
-        if (reminderEnabled) setReminder(reminderId, reminderMinutes);
-        else removeReminder(reminderId);
+        if (reminderEnabled) {
+          await setReminder(reminderId, reminderMinutes);
+        } else {
+          await removeReminder(reminderId);
+        }
         await syncGoogle();
       } catch (error) {
         console.error("Failed to update Google event:", error);
-        if (error.message?.includes("401")) disconnectCalendar();
+        if (error.message?.includes("401")) expireCalendarAccess();
         return;
       }
     } else {
@@ -660,14 +671,17 @@ export default function CalendarPanel({ onOpenMenu }) {
             "Google sync failed; the event was still saved to the household:",
             error,
           );
-          if (error.message?.includes("401")) disconnectCalendar();
+          if (error.message?.includes("401")) expireCalendarAccess();
         }
       }
 
       try {
         await saveHouseholdEvent(sharedEvent);
-        if (reminderEnabled) setReminder(sharedEvent.id, reminderMinutes);
-        else removeReminder(sharedEvent.id);
+        if (reminderEnabled) {
+          await setReminder(sharedEvent.id, reminderMinutes);
+        } else {
+          await removeReminder(sharedEvent.id);
+        }
         if (calendarConnected) await syncGoogle();
       } catch (error) {
         console.error("Failed to save household event:", error);
@@ -680,12 +694,14 @@ export default function CalendarPanel({ onOpenMenu }) {
     accessToken,
     calendarConnected,
     canSave,
-    disconnectCalendar,
+    expireCalendarAccess,
     editingEvent,
+    removeReminder,
     familyMembers,
     reminderEnabled,
     reminderMinutes,
     saveHouseholdEvent,
+    setReminder,
     syncGoogle,
   ]);
 
@@ -694,6 +710,7 @@ export default function CalendarPanel({ onOpenMenu }) {
       if (!accessToken) return;
       try {
         await deleteGoogleEvent(accessToken, editingEvent.id, editingEvent.calendarId);
+        await removeReminder(editingEvent.reminderId || editingEvent.id);
         await syncGoogle();
       } catch (error) {
         console.error("Failed to delete from Google:", error);
@@ -712,11 +729,11 @@ export default function CalendarPanel({ onOpenMenu }) {
         }
       }
       await deleteHouseholdEvent(editingEvent.id);
-      removeReminder(editingEvent.id);
+      await removeReminder(editingEvent.reminderId || editingEvent.id);
     }
     setDialogOpen(false);
     setEditingEvent(null);
-  }, [editingEvent, accessToken, deleteHouseholdEvent, syncGoogle]);
+  }, [editingEvent, accessToken, deleteHouseholdEvent, removeReminder, syncGoogle]);
 
   const navigateWeek = (direction) => {
     setCurrentDate((previous) => addDays(previous, direction * 7));
@@ -737,7 +754,7 @@ export default function CalendarPanel({ onOpenMenu }) {
               <Typography variant="h4" sx={{ fontSize: { xs: "1.55rem", sm: "1.72rem" }, lineHeight: 1.05 }}>
                 Dashboard
               </Typography>
-              <Tooltip title={calendarConnected ? "Sync calendar now" : "Calendar is stored on this device"}>
+              <Tooltip title={calendarConnected ? "Sync calendar now" : "Google Calendar authorization is needed"}>
                 <Typography
                   component={calendarConnected ? "button" : "p"}
                   type={calendarConnected ? "button" : undefined}
@@ -747,7 +764,9 @@ export default function CalendarPanel({ onOpenMenu }) {
                   sx={{ mt: 0.5, p: 0, border: 0, bgcolor: "transparent", fontFamily: "inherit", cursor: calendarConnected ? "pointer" : "default" }}
                 >
                   {selectedWeekEventCount} event{selectedWeekEventCount === 1 ? "" : "s"}
-                  {calendarConnected ? ` · ${syncing ? "Syncing…" : "Google synced"}` : " · Calendar not connected"}
+                  {calendarConnected
+                    ? ` · ${syncing ? "Syncing…" : "Google synced"}`
+                    : " · Google sync needs authorization"}
                 </Typography>
               </Tooltip>
             </Box>
@@ -756,8 +775,15 @@ export default function CalendarPanel({ onOpenMenu }) {
             {!calendarConnected && (
               <Chip
                 icon={<GoogleIcon sx={{ fontSize: 16 }} />}
-                label={sessionExpired ? "Reconnect calendar" : "Connect calendar"}
-                onClick={connectCalendar}
+                label={
+                  canRenewCalendarAccess
+                    ? "Renew Calendar access"
+                    : "Calendar sync unavailable"
+                }
+                onClick={
+                  canRenewCalendarAccess ? renewCalendarAccess : undefined
+                }
+                disabled={!canRenewCalendarAccess}
                 variant="outlined"
                 sx={{ fontWeight: 650, flexShrink: 0 }}
               />
@@ -891,6 +917,7 @@ export default function CalendarPanel({ onOpenMenu }) {
             <AgendaView
               key={currentDate.getTime()}
               events={allEvents}
+              reminders={eventReminders}
               familyMembers={familyMembers}
               currentDate={currentDate}
               now={now}
@@ -953,6 +980,7 @@ export default function CalendarPanel({ onOpenMenu }) {
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <AgendaView
                 events={allEvents}
+                reminders={eventReminders}
                 familyMembers={familyMembers}
                 currentDate={currentDate}
                 now={now}

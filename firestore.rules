@@ -36,6 +36,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, create, update: if signedIn() && request.auth.uid == userId;
       allow delete: if false;
+
+      match /eventReminders/{eventId} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
     }
 
     match /households/{householdId} {

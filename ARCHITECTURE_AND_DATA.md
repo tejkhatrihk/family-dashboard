@@ -4,12 +4,12 @@ Last reviewed: September 24, 2026
 
 ## Decision summary
 
-Family Dashboard uses Firebase Authentication for identity and Cloud Firestore as the primary application database. Google Calendar is an optional integration. Google Drive is not used as the application database; it may be added later as an explicit export or backup destination.
+Family Dashboard uses Firebase Authentication for identity and Cloud Firestore as the primary application database. Google Calendar access is requested during Google sign-in and is used for calendar sync. Google Drive is not used as the application database; it may be added later as an explicit export or backup destination.
 
 This architecture is intentional:
 
-- Firestore supports concurrent edits, real-time updates, offline caching, structured queries, and security rules.
-- A household can use the dashboard without granting Calendar access.
+- Firestore supports concurrent edits, real-time updates, structured queries, and security rules. This app uses Firestore's in-memory cache and does not persist cached family data on the device.
+- Google Calendar permission is requested during Google sign-in.
 - A user's personal Google Drive quota is not consumed by normal application use.
 - Users do not need to create Firebase projects or provide Firebase keys.
 - Google Calendar authorization can expire or be revoked without making household data unavailable.
@@ -61,6 +61,7 @@ The current data model is:
 
 ```text
 users/{uid}
+users/{uid}/eventReminders/{eventId}
 households/{householdId}
 households/{householdId}/members/{uid}
 households/{householdId}/events/{eventId}
@@ -163,7 +164,7 @@ Each recipe document contains the recipe editor's fields, including its name, in
 - Google passwords
 - Google Calendar access tokens
 - Browser notification permission
-- Local reminder delivery history
+- Persistent reminder delivery history; markers exist only in memory while the app is open
 - A persisted shopping list; the shopping list is currently a placeholder
 - Large photos, videos, or file attachments
 
@@ -171,10 +172,9 @@ Large binary files should not be stored directly in Firestore. If attachments ar
 
 ### Browser local storage
 
-The current browser stores:
+The app does not write current application records to persistent browser storage. Legacy browser-only events, meals, recipes, and reminder settings are read for migration and removed only after a successful migration. Existing Firestore records take precedence; missing legacy records are imported. If migration fails, the local copy is retained for retry.
 
-- Reminder settings and reminder delivery state
-- Legacy local events, meals, or recipes until migration occurs
+Event reminder preferences are stored per signed-in user in `users/{uid}/eventReminders/{eventId}`. Reminder delivery markers are kept only in memory while the app is open and reset on reload.
 
 ### Browser session storage
 
@@ -183,13 +183,15 @@ The current browser tab stores:
 - A short-lived Google Calendar OAuth access token, keyed by Firebase UID
 - The Calendar token expiration time
 
-Calendar tokens are removed when they expire or when the user disconnects Calendar. They remain available across page reloads in the same tab, but closing the tab clears them and requires the user to reconnect Calendar. On startup, the app also removes any legacy Calendar tokens left in persistent local storage.
+Calendar tokens are removed when they expire or when the user signs out. They remain available across page reloads in the same tab, but closing the tab clears them. On startup, the app also removes any legacy Calendar tokens left in persistent local storage.
 
 Session storage limits how long a token remains on the device; it does not protect the token from scripts running in the app's origin. Preventing cross-site scripting remains essential, and a production security review should verify the app's content-security policy and third-party script exposure.
 
+Firebase Authentication also maintains its sign-in session using browser-managed persistence. Firestore is initialized with its default in-memory cache; this app does not enable persistent Firestore data caching.
+
 ### Google Calendar
 
-Calendar access is optional and separate from Firebase sign-in.
+Google Calendar access is requested as part of Google sign-in. Google still requires the user to approve the Calendar permission. Access tokens are short-lived; when one expires, the user must explicitly renew access. Existing users must sign out and back in once to grant the requested sign-in scope. The app does not keep a Google refresh token.
 
 When connected:
 

@@ -4,7 +4,7 @@ A responsive household dashboard with account-based and managed family profiles,
 
 See [ARCHITECTURE_AND_DATA.md](./ARCHITECTURE_AND_DATA.md) for the complete data model, privacy boundaries, cost model, sign-in flow, Google Calendar behavior, setup instructions, and production checklist.
 
-Household events, meal plans, recipes, member profiles, and invitations are stored in Cloud Firestore. Existing browser-local events, meals, and recipes are migrated into the first household automatically when its shared collections are empty.
+Household events, meal plans, recipes, member profiles, invitations, and personal event-reminder settings are stored in Cloud Firestore. Legacy browser-only records are imported when they are missing from Firestore and removed from browser storage only after migration succeeds. Firestore's local cache is in-memory; family data is not persisted offline on the device.
 
 ## Firebase setup
 
@@ -31,7 +31,9 @@ Do not use Firestore test-mode rules for a deployed app. The included rules isol
 
 ## Google Calendar setup
 
-Calendar access is separate from dashboard sign-in. Users can enter the dashboard with basic Google identity permissions and choose **Connect Google Calendar** later.
+Google Calendar access is requested during Google sign-in. Users approve the requested Calendar permission in Google's consent screen. Access tokens expire, so the app asks the user to renew Calendar access when needed.
+
+Existing users need to sign out and back in once after this change so Google can grant the Calendar permission during sign-in.
 
 1. Enable the Google Calendar API in the same Google Cloud project.
 2. Create a Web OAuth client.
@@ -41,7 +43,7 @@ Calendar access is separate from dashboard sign-in. Users can enter the dashboar
 
 For a household to see each member's events, members must share the relevant Google calendars with one another. Each new member's calendar ID defaults to their Google email address.
 
-Dashboard events are always saved to Firestore, so they remain visible to household members who have not connected Calendar. When Calendar is connected, new dashboard events are also mirrored to the selected member's Google calendar. External Google events are visible only while that user has Calendar connected.
+Dashboard events are always saved to Firestore, so they remain visible to household members who have not authorized Calendar access. When Calendar access is authorized, new dashboard events are also mirrored to the selected member's Google calendar. External Google events are visible only while that user's access token is valid.
 
 ## AI Quick Add setup
 

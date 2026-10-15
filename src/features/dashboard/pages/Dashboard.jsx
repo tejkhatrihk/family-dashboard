@@ -1,5 +1,4 @@
 import CalendarTodayOutlinedIcon from "@mui/icons-material/CalendarTodayOutlined";
-import GoogleIcon from "@mui/icons-material/Google";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
@@ -20,7 +19,6 @@ import { useState } from "react";
 import RecipesPage from "@/features/recipes/pages/RecipesPage";
 import HouseholdPanel from "@/features/household/components/HouseholdPanel";
 import { useFirebaseAuth } from "@/shared/api/firebaseAuthContext";
-import { useGoogleCalendar } from "@/shared/api/googleCalendarContext";
 import CalendarPanel from "../components/CalendarPanel";
 import ShoppingListPanel from "../components/ShoppingListPanel";
 
@@ -34,12 +32,6 @@ export default function Dashboard() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [currentView, setCurrentView] = useState("dashboard");
   const { user, logout } = useFirebaseAuth();
-  const {
-    calendarConnected,
-    sessionExpired,
-    connectCalendar,
-    disconnectCalendar,
-  } = useGoogleCalendar();
 
   const navigate = (view) => {
     setCurrentView(view);
@@ -103,19 +95,6 @@ export default function Dashboard() {
               </Box>
               <IconButton aria-label="Sign out of dashboard" onClick={logout}><LogoutIcon fontSize="small" /></IconButton>
             </Box>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<GoogleIcon />}
-              onClick={calendarConnected ? disconnectCalendar : connectCalendar}
-              sx={{ mt: 1.5 }}
-            >
-              {calendarConnected
-                ? "Disconnect Google Calendar"
-                : sessionExpired
-                  ? "Reconnect Google Calendar"
-                  : "Connect Google Calendar"}
-            </Button>
           </Box>
         </Box>
       </Drawer>

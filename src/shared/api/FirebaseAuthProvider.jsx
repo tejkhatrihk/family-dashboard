@@ -8,10 +8,16 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FirebaseAuthContext } from "./firebaseAuthContext";
 import {
+  clearGoogleCalendarToken,
+  storeGoogleCalendarToken,
+} from "./googleCalendarTokenStorage";
+import {
   firebaseAuth,
   firestore,
   isFirebaseConfigured,
 } from "./firebaseClient";
+
+const CALENDAR_SCOPE = import.meta.env.VITE_GOOGLE_CALENDAR_SCOPES;
 
 async function ensureUserProfile(user) {
   await setDoc(
@@ -51,9 +57,14 @@ export default function FirebaseAuthProvider({ children }) {
     if (!firebaseAuth) return;
     setError(null);
     const provider = new GoogleAuthProvider();
+    if (CALENDAR_SCOPE) provider.addScope(CALENDAR_SCOPE);
     provider.setCustomParameters({ prompt: "select_account" });
     try {
-      await signInWithPopup(firebaseAuth, provider);
+      const result = await signInWithPopup(firebaseAuth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        storeGoogleCalendarToken(result.user.uid, credential.accessToken);
+      }
     } catch (loginError) {
       setError(loginError);
       throw loginError;
@@ -61,7 +72,12 @@ export default function FirebaseAuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
-    if (firebaseAuth) await signOut(firebaseAuth);
+    if (firebaseAuth) {
+      if (firebaseAuth.currentUser) {
+        clearGoogleCalendarToken(firebaseAuth.currentUser.uid);
+      }
+      await signOut(firebaseAuth);
+    }
   }, []);
 
   const value = useMemo(

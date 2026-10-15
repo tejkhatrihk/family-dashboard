@@ -1,59 +1,4 @@
-const REMINDER_STORAGE_KEY = "family_event_reminders";
-const FIRED_STORAGE_KEY = "family_reminders_fired";
-
-// ── Persistence ────────────────────────────────────────────────────────
-export function loadReminders() {
-  try {
-    return JSON.parse(localStorage.getItem(REMINDER_STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-
-export function saveReminders(reminders) {
-  localStorage.setItem(REMINDER_STORAGE_KEY, JSON.stringify(reminders));
-}
-
-export function getReminder(eventId) {
-  const all = loadReminders();
-  return all[eventId] ?? null;
-}
-
-export function setReminder(eventId, minutesBefore) {
-  const all = loadReminders();
-  all[eventId] = minutesBefore;
-  saveReminders(all);
-}
-
-export function removeReminder(eventId) {
-  const all = loadReminders();
-  delete all[eventId];
-  saveReminders(all);
-}
-
-// ── Fired tracking (so we don't repeat) ────────────────────────────────
-function getFired() {
-  try {
-    return JSON.parse(localStorage.getItem(FIRED_STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-
-function markFired(key) {
-  const fired = getFired();
-  fired[key] = Date.now();
-  // Clean entries older than 24 hours
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  for (const k of Object.keys(fired)) {
-    if (fired[k] < cutoff) delete fired[k];
-  }
-  localStorage.setItem(FIRED_STORAGE_KEY, JSON.stringify(fired));
-}
-
-function hasFired(key) {
-  return !!getFired()[key];
-}
+const firedReminders = new Map();
 
 // ── Chime via Web Audio API ────────────────────────────────────────────
 function playChime() {
@@ -119,9 +64,12 @@ function speak(text) {
 }
 
 // ── Check and fire reminders ───────────────────────────────────────────
-export async function checkReminders(events) {
-  const reminders = loadReminders();
+export async function checkReminders(events, reminders = {}) {
   const now = Date.now();
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  for (const [key, firedAt] of firedReminders) {
+    if (firedAt < cutoff) firedReminders.delete(key);
+  }
   const reminderKeys = Object.keys(reminders);
 
   if (reminderKeys.length > 0) {
@@ -141,13 +89,13 @@ export async function checkReminders(events) {
     const minsUntilTrigger = Math.round((triggerTime - now) / 60000);
 
     console.debug(
-      `[Reminders] "${event.title}" (${event.owner}) — triggers in ${minsUntilTrigger} min, fired: ${hasFired(firedKey)}`,
+      `[Reminders] "${event.title}" (${event.owner}) — triggers in ${minsUntilTrigger} min, fired: ${firedReminders.has(firedKey)}`,
     );
 
     // Fire if we're within the reminder window (trigger time to event start)
     // and haven't already fired
-    if (now >= triggerTime && now < eventStart && !hasFired(firedKey)) {
-      markFired(firedKey);
+    if (now >= triggerTime && now < eventStart && !firedReminders.has(firedKey)) {
+      firedReminders.set(firedKey, now);
 
       const minsLeft = Math.round((eventStart - now) / 60000);
       const ownerText = event.owner ? `${event.owner} has` : "You have";

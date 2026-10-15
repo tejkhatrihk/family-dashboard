@@ -56,7 +56,7 @@ function SignInPage({ login, error }) {
           Continue with Google
         </Button>
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
-          This signs you into the dashboard only. Calendar access is requested separately.
+          Google Calendar access is requested during sign-in to enable calendar sync.
         </Typography>
       </Paper>
     </CenteredPage>
