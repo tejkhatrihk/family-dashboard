@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Family Dashboard",
+  "short_name": "Family",
+  "description": "A shared dashboard for your family's plans and calendar.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f5",
+  "theme_color": "#1976d2",
+  "icons": [
+    {
+      "src": "/family-dashboard-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/family-dashboard-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/family-dashboard.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -189,6 +189,10 @@ Session storage limits how long a token remains on the device; it does not prote
 
 Firebase Authentication also maintains its sign-in session using browser-managed persistence. Firestore is initialized with its default in-memory cache; this app does not enable persistent Firestore data caching.
 
+### PWA app-shell cache
+
+The installable PWA service worker caches the root app shell and same-origin scripts, styles, images, and fonts. It does not cache Firestore, Google, or other cross-origin/API requests. The app interface may load offline after it has been opened online, but family data and calendar synchronization still require an internet connection. This keeps persistent browser storage limited to app resources rather than household data.
+
 ### Google Calendar
 
 Google Calendar access is requested as part of Google sign-in. Google still requires the user to approve the Calendar permission. Access tokens are short-lived; when one expires, the user must explicitly renew access. Existing users must sign out and back in once to grant the requested sign-in scope. The app does not keep a Google refresh token.

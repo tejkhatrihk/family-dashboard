@@ -45,6 +45,21 @@ For a household to see each member's events, members must share the relevant Goo
 
 Dashboard events are always saved to Firestore, so they remain visible to household members who have not authorized Calendar access. When Calendar access is authorized, new dashboard events are also mirrored to the selected member's Google calendar. External Google events are visible only while that user's access token is valid.
 
+## Install as a PWA
+
+The app can be installed from its HTTPS website on supported phones, tablets, and desktop browsers. The service worker caches only the app shell and same-origin static assets; family data still needs an internet connection and is not cached for offline use.
+
+1. Deploy the app to Firebase Hosting with `npm run build` followed by `firebase deploy --only hosting`.
+2. Open the HTTPS site on the device and sign in.
+3. On Android, use the browser menu's **Install app** or **Add to Home screen** action. On iPhone or iPad, open the site in Safari, tap **Share**, then **Add to Home Screen**.
+4. On an Amazon Fire tablet, open the site in Silk and use its available **Add to Home Screen** option. Browser/Fire OS support varies by model; test the exact tablet before choosing it as the wall display.
+
+For an old HP laptop, use Chrome or Edge and choose **Install this site as an app** from the browser menu. It can stay plugged in and open on the dashboard, but the lid/display sleep behavior may need to be adjusted in the laptop's power settings.
+
+The PWA itself has no fee or app-store charge. Firebase Hosting currently includes 10 GB storage and 10 GB/month data transfer at no cost ([Firebase Hosting quotas](https://firebase.google.com/docs/hosting/usage-quotas-pricing)). This project also uses Cloud Functions for AI Quick Add, which requires the Blaze billing plan; that is pay-as-you-go and can incur charges. Check Firebase usage and configure budget alerts before deployment. Budget alerts notify you but do not cap charges.
+
+To test without public hosting, run `npm run dev -- --host 0.0.0.0` and open the app from devices on the same Wi-Fi using the computer's local network address. Local development is not an installable PWA on other devices because browsers require HTTPS for service workers; use Firebase Hosting for installation testing.
+
 ## AI Quick Add setup
 
 Quick Add always runs the local deterministic parser first. When that parser cannot confidently understand a sentence, the event preview offers an optional AI fallback. The AI response only fills the editable event form; it never creates an event automatically.

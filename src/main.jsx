@@ -7,6 +7,14 @@ import ReactDOM from "react-dom/client";
 import App from "../src/app/App";
 import { dashboardTheme } from "./app/theme";
 
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error) => {
+      console.error("Failed to register the app service worker:", error);
+    });
+  });
+}
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ThemeProvider theme={dashboardTheme}>
