@@ -14,6 +14,8 @@ This architecture is intentional:
 - Users do not need to create Firebase projects or provide Firebase keys.
 - Google Calendar authorization can expire or be revoked without making household data unavailable.
 
+AI-assisted Quick Add is optional. A deterministic parser runs in the browser first. If the user explicitly chooses the AI fallback, an authenticated Firebase callable function sends the sentence and family display names to OpenAI and returns structured suggestions. The function cannot create events; the user reviews the populated form and confirms it through the existing event workflow.
+
 ## System overview
 
 ```text
@@ -42,6 +44,8 @@ Cloud Firestore
 The Firebase web configuration identifies the application and is shared by every browser. Access is protected by Firebase Authentication and Firestore Security Rules, not by hiding the web API key.
 
 Never put a Firebase Admin service-account key, private key, OAuth client secret, or refresh token in the browser application.
+
+The OpenAI API key is also server-only. It is stored in Google Cloud Secret Manager and bound only to the Quick Add callable function.
 
 ## What is stored where
 
@@ -83,6 +87,7 @@ householdInvites/{inviteCode}
 
 - Household name
 - Owner UID
+- Whether child-specific meal-plan columns are enabled
 - Creation and update timestamps
 
 Each member document stores:
@@ -98,6 +103,7 @@ Each member document stores:
 - Invitation code used to join, when applicable
 - Member type (`account` or `managed`)
 - Whether the member can sign in independently
+- Whether the profile is designated as a child
 
 Households support two member models:
 
@@ -123,6 +129,7 @@ An invitation can only be accepted by a signed-in Google account whose email mat
 Each household event stores:
 
 - Title and optional description
+- Optional location
 - Start and end date/time
 - All-day status
 - Assigned family member
@@ -140,9 +147,12 @@ Each menu document is keyed by date and can contain:
 
 - Breakfast
 - Lunch
-- Child lunch
+- Generic child lunch (stored under the legacy `Kaira-Lunch` meal key)
+- Optional child-specific lunches, keyed by child member UID
 - Dinner
 - Last-updated timestamp
+
+The household owner can designate account or managed profiles as children. Child-specific lunch columns are absent unless the owner enables child meal plans. When enabled, the meal grid shows a separate lunch column for each designated child, and the dashboard's meal summary uses the child's name. The legacy generic child-lunch entry is retained in stored menu data for compatibility, but is not shown as a column or in the meal summary.
 
 #### Recipes
 
@@ -163,12 +173,19 @@ Large binary files should not be stored directly in Firestore. If attachments ar
 
 The current browser stores:
 
-- A short-lived Google Calendar OAuth access token, keyed by Firebase UID
-- The Calendar token expiration time
 - Reminder settings and reminder delivery state
 - Legacy local events, meals, or recipes until migration occurs
 
-Calendar tokens are removed when they expire or when the user disconnects Calendar. A production security review should consider keeping access tokens in memory or session storage instead of persistent local storage.
+### Browser session storage
+
+The current browser tab stores:
+
+- A short-lived Google Calendar OAuth access token, keyed by Firebase UID
+- The Calendar token expiration time
+
+Calendar tokens are removed when they expire or when the user disconnects Calendar. They remain available across page reloads in the same tab, but closing the tab clears them and requires the user to reconnect Calendar. On startup, the app also removes any legacy Calendar tokens left in persistent local storage.
+
+Session storage limits how long a token remains on the device; it does not protect the token from scripts running in the app's origin. Preventing cross-site scripting remains essential, and a production security review should verify the app's content-security policy and third-party script exposure.
 
 ### Google Calendar
 

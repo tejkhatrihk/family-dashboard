@@ -36,6 +36,7 @@ function eventDocument(event) {
   return {
     title: event.title,
     description: event.description || "",
+    location: event.location || "",
     checklist: event.checklist || [],
     start: event.start,
     end: event.end,

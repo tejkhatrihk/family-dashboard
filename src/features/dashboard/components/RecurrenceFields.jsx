@@ -47,6 +47,7 @@ export default function RecurrenceFields({ event, onChange }) {
         <Select
           value={preset}
           label="Repeat"
+          disabled={!event?.start}
           onChange={(e) =>
             onChange({
               ...event,
@@ -128,7 +129,7 @@ export default function RecurrenceFields({ event, onChange }) {
               type="date"
               value={recurrence.until || ""}
               onChange={(e) => updateRecurrence({ until: e.target.value })}
-              inputProps={{ min: format(event.start, "yyyy-MM-dd") }}
+              inputProps={{ min: event.start ? format(event.start, "yyyy-MM-dd") : undefined }}
               InputLabelProps={{ shrink: true }}
               fullWidth
               size="small"

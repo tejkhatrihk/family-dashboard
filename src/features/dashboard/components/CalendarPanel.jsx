@@ -1,15 +1,23 @@
 import AddIcon from "@mui/icons-material/Add";
+import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
+import ChecklistOutlinedIcon from "@mui/icons-material/ChecklistOutlined";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import GoogleIcon from "@mui/icons-material/Google";
+import HomeOutlinedIcon from "@mui/icons-material/HomeOutlined";
 import MenuIcon from "@mui/icons-material/Menu";
+import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
 import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
+import RestaurantMenuOutlinedIcon from "@mui/icons-material/RestaurantMenuOutlined";
 import {
   Avatar,
   Box,
+  BottomNavigation,
+  BottomNavigationAction,
   Button,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -24,6 +32,8 @@ import {
   Select,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -37,6 +47,7 @@ import {
   endOfWeek,
   format,
   getDay,
+  isValid,
   parse,
   startOfMonth,
   startOfWeek,
@@ -58,9 +69,12 @@ import {
 import {
   getMealsForDate,
   MEAL_EMOJI,
+  MEAL_LABELS,
+  toDateKey,
 } from "../services/mealService";
 import { useHouseholdMenu } from "../hooks/useHouseholdMenu";
 import { useHouseholdEvents } from "../hooks/useHouseholdEvents";
+import { useHouseholdTasks } from "../../tasks/hooks/useHouseholdTasks";
 import {
   checkReminders,
   getReminder,
@@ -75,6 +89,10 @@ import {
 import AgendaView from "./AgendaView";
 import EventChecklistEditor from "./EventChecklistEditor";
 import RecurrenceFields from "./RecurrenceFields";
+import QuickAddInput from "./QuickAddInput";
+import MenuPanel from "../../../shared/components/MenuPanel";
+import { TaskPanelContent } from "../../tasks/components/TaskPanel";
+import { applyQuickAddResult } from "../services/quickAddEventMapper";
 
 const locales = { "en-IN": enIN };
 const localizer = dateFnsLocalizer({
@@ -108,6 +126,7 @@ function createNewEvent(start, end, member) {
     id: `local_${Date.now()}`,
     title: "",
     description: "",
+    location: "",
     checklist: [],
     start,
     end,
@@ -201,17 +220,79 @@ function WeekCalendarEvent({ event, familyMembers }) {
 
 function WallSidebar({
   tomorrowMeals,
+  tasks,
   familyMembers,
   hiddenMembers,
   showFamily,
   onToggleMember,
-  onAddEvent,
+  onToggleTask,
+  onOpenTasks,
 }) {
+  const taskPreview = tasks.slice(0, 3);
+  const completedTaskCount = tasks.filter((task) => task.completed).length;
+
   return (
     <Stack spacing={1.5} sx={{ width: 260, flexShrink: 0 }}>
-      <Paper elevation={0} sx={{ p: 1.5, border: "1px solid", borderColor: "divider" }}>
-        <Button fullWidth variant="contained" startIcon={<AddIcon />} onClick={onAddEvent} sx={{ minHeight: 48 }}>
-          Add event
+      <Paper elevation={0} sx={{ p: 1.75, border: "1px solid", borderColor: "divider" }}>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+          <Typography variant="body2" sx={{ fontWeight: 800 }}>Tasks</Typography>
+          <Typography variant="caption" color="primary.main" sx={{ fontWeight: 800 }}>
+            {completedTaskCount}/{tasks.length}
+          </Typography>
+        </Box>
+
+        {taskPreview.length ? (
+          <Stack spacing={0}>
+            {taskPreview.map((task) => {
+              const palette = getMemberPalette(familyMembers, task.owner);
+              return (
+                <Box
+                  key={task.id}
+                  sx={{
+                    minHeight: 40,
+                    display: "flex",
+                    alignItems: "center",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                    opacity: task.completed ? 0.58 : 1,
+                  }}
+                >
+                  <Checkbox
+                    size="small"
+                    checked={Boolean(task.completed)}
+                    onChange={(event) => onToggleTask(task.id, event.target.checked)}
+                    inputProps={{ "aria-label": `Mark ${task.title} ${task.completed ? "incomplete" : "complete"}` }}
+                    sx={{ p: 0.5, mr: 0.5 }}
+                  />
+                  <Avatar
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      mr: 0.75,
+                      bgcolor: palette.main,
+                      fontSize: "0.68rem",
+                      fontWeight: 800,
+                    }}
+                  >
+                    {(task.owner || "F").slice(0, 1).toUpperCase()}
+                  </Avatar>
+                  <Typography
+                    variant="body2"
+                    noWrap
+                    sx={{ fontWeight: 650, textDecoration: task.completed ? "line-through" : "none" }}
+                  >
+                    {task.title}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">No tasks due today</Typography>
+        )}
+
+        <Button size="small" fullWidth onClick={onOpenTasks} sx={{ mt: 0.75 }}>
+          {tasks.length > 3 ? `+${tasks.length - 3} more` : "View all tasks"}
         </Button>
       </Paper>
 
@@ -223,10 +304,10 @@ function WallSidebar({
           <Stack spacing={0.85} sx={{ mt: 1.25 }}>
             {tomorrowMeals.meals.map((meal) => (
               <Box key={meal.type} sx={{ display: "flex", gap: 0.75, alignItems: "flex-start" }}>
-                <Box component="span" aria-hidden>{MEAL_EMOJI[meal.type]}</Box>
+                <Box component="span" aria-hidden>{meal.emoji || MEAL_EMOJI[meal.type]}</Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.1 }}>
-                    {meal.type}
+                    {meal.label || MEAL_LABELS[meal.type]}
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 650 }}>{meal.value}</Typography>
                 </Box>
@@ -271,7 +352,7 @@ export default function CalendarPanel({ onOpenMenu }) {
     connectCalendar,
     disconnectCalendar,
   } = useGoogleCalendar();
-  const { members: householdMembers } = useHousehold();
+  const { household, members: householdMembers } = useHousehold();
   const now = useCurrentTime();
   const { menu } = useHouseholdMenu();
   const {
@@ -279,10 +360,18 @@ export default function CalendarPanel({ onOpenMenu }) {
     saveEvent: saveHouseholdEvent,
     deleteEvent: deleteHouseholdEvent,
   } = useHouseholdEvents();
+  const taskStore = useHouseholdTasks();
+  const { tasks: householdTasks, setTaskCompleted } = taskStore;
   const tomorrowMeals = useMemo(() => {
     const date = addDays(now, 1);
-    return { date, meals: getMealsForDate(date, menu) };
-  }, [menu, now]);
+    return {
+      date,
+      meals: getMealsForDate(date, menu, {
+        children: householdMembers,
+        childMealPlansEnabled: household?.childrenMealPlansEnabled,
+      }),
+    };
+  }, [household?.childrenMealPlansEnabled, householdMembers, menu, now]);
   const familyMembers = useMemo(
     () => getAvailableFamilyMembers(householdMembers),
     [householdMembers],
@@ -292,6 +381,7 @@ export default function CalendarPanel({ onOpenMenu }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [currentView, setCurrentView] = useState("agenda");
+  const [dashboardSection, setDashboardSection] = useState("calendar");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderMinutes, setReminderMinutes] = useState(15);
@@ -333,6 +423,36 @@ export default function CalendarPanel({ onOpenMenu }) {
     const lastDay = endOfWeek(currentDate, { weekStartsOn: 1 });
     return allEvents.filter((event) => event.start >= firstDay && event.start <= lastDay).length;
   }, [allEvents, currentDate]);
+  const openTaskCount = householdTasks.filter((task) => !task.completed).length;
+  const wallTasks = useMemo(() => {
+    const todayKey = toDateKey(now);
+    return householdTasks
+      .map((task) => ({
+        ...task,
+        owner:
+          familyMembers.find((member) => member.id === task.assigneeId)?.name ||
+          task.assigneeName,
+      }))
+      .filter(
+        (task) =>
+          !hiddenMembers.has(task.owner) &&
+          (task.dueDate === todayKey || (!task.completed && task.dueDate < todayKey)),
+      )
+      .sort(
+        (first, second) =>
+          Number(first.completed) - Number(second.completed) ||
+          first.dueDate.localeCompare(second.dueDate) ||
+          first.title.localeCompare(second.title),
+      );
+  }, [familyMembers, hiddenMembers, householdTasks, now]);
+  const handleToggleTask = useCallback(
+    (taskId, completed) => {
+      setTaskCompleted(taskId, completed).catch((error) => {
+        console.error("Failed to update household task:", error);
+      });
+    },
+    [setTaskCompleted],
+  );
 
   const syncGoogle = useCallback(async () => {
     if (!accessToken) return;
@@ -404,9 +524,79 @@ export default function CalendarPanel({ onOpenMenu }) {
     [householdEvents],
   );
 
+  const handleUseQuickAddDraft = useCallback(
+    (parsedResult) => {
+      setEditingEvent((previous) =>
+        applyQuickAddResult(previous, parsedResult, familyMembers),
+      );
+    },
+    [familyMembers],
+  );
+
+  const handleUpdateEventChecklist = useCallback(
+    async (event, checklist) => {
+      const eventToUpdate = event.recurrenceParentId
+        ? householdEvents.find((candidate) => candidate.id === event.recurrenceParentId) || event
+        : event;
+      const updatedEvent = { ...eventToUpdate, checklist };
+
+      if (updatedEvent.source === "google") {
+        if (!calendarConnected || !accessToken) return;
+        try {
+          await updateGoogleEvent(
+            accessToken,
+            updatedEvent.id,
+            updatedEvent,
+            updatedEvent.calendarId,
+          );
+          await syncGoogle();
+        } catch (error) {
+          console.error("Failed to update the event checklist:", error);
+          if (error.message?.includes("401")) disconnectCalendar();
+        }
+        return;
+      }
+
+      try {
+        await saveHouseholdEvent(updatedEvent);
+      } catch (error) {
+        console.error("Failed to save the event checklist:", error);
+        return;
+      }
+
+      if (calendarConnected && accessToken && updatedEvent.googleEventId) {
+        try {
+          await updateGoogleEvent(
+            accessToken,
+            updatedEvent.googleEventId,
+            updatedEvent,
+            updatedEvent.googleCalendarId || updatedEvent.calendarId,
+          );
+          await syncGoogle();
+        } catch (error) {
+          console.error("Failed to sync the event checklist to Google:", error);
+          if (error.message?.includes("401")) disconnectCalendar();
+        }
+      }
+    },
+    [
+      accessToken,
+      calendarConnected,
+      disconnectCalendar,
+      householdEvents,
+      saveHouseholdEvent,
+      syncGoogle,
+    ],
+  );
+
+  const hasValidStart = isValid(editingEvent?.start);
+  const hasValidEnd = isValid(editingEvent?.end);
   const canSave =
     Boolean(editingEvent?.title?.trim()) &&
-    editingEvent?.end > editingEvent?.start &&
+    Boolean(editingEvent?.owner) &&
+    hasValidStart &&
+    hasValidEnd &&
+    editingEvent.end > editingEvent.start &&
     isRecurrenceValid(editingEvent);
 
   const handleSave = useCallback(async () => {
@@ -536,7 +726,7 @@ export default function CalendarPanel({ onOpenMenu }) {
     householdEvents.some((event) => event.id === editingEvent?.id);
 
   return (
-    <Box sx={{ minHeight: "100%", bgcolor: "background.default", display: "flex", flexDirection: "column" }}>
+    <Box sx={{ minHeight: "100%", pb: { xs: 8, sm: 0 }, bgcolor: "background.default", display: "flex", flexDirection: "column" }}>
       <Box component="header" sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
         <Box sx={{ px: { xs: 1.5, sm: 2 }, py: 1.8, display: "flex", flexDirection: { xs: "column", sm: "row" }, alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between", gap: { xs: 1.25, sm: 2 } }}>
           <Box sx={{ display: "flex", alignItems: "center", minWidth: 0 }}>
@@ -584,89 +774,135 @@ export default function CalendarPanel({ onOpenMenu }) {
           </Box>
         </Box>
 
-        <Box
+        <Tabs
+          value={dashboardSection}
+          onChange={(_, value) => setDashboardSection(value)}
+          variant="scrollable"
+          scrollButtons={false}
+          aria-label="Dashboard sections"
           sx={{
-            minHeight: 66,
-            px: { xs: 1.5, sm: 2 },
-            py: 1.25,
+            minHeight: 52,
+            px: { xs: 1.5, sm: 3 },
             borderTop: "1px solid",
             borderColor: "divider",
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr auto", md: "1fr auto 1fr" },
-            alignItems: "center",
-            gap: 1.5,
+            "& .MuiTab-root": {
+              minHeight: 52,
+              px: { xs: 1.25, sm: 2 },
+              fontSize: "0.9rem",
+              fontWeight: 750,
+              textTransform: "none",
+            },
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0, gridColumn: 1, gridRow: 1 }}>
-            <Button variant="outlined" size="small" onClick={() => setCurrentDate(new Date())} sx={{ borderColor: "divider", color: "text.primary", bgcolor: "white" }}>
-              Today
-            </Button>
-            <IconButton size="small" aria-label="Previous week" onClick={() => navigateWeek(-1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
-            <IconButton size="small" aria-label="Next week" onClick={() => navigateWeek(1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
-              <ChevronRightIcon fontSize="small" />
-            </IconButton>
-            <Typography variant="body2" sx={{ fontWeight: 800, ml: 0.4, whiteSpace: "nowrap" }}>
-              {formatWeekRange(currentDate)}
-            </Typography>
-          </Box>
+          <Tab value="calendar" icon={<CalendarMonthOutlinedIcon fontSize="small" />} iconPosition="start" label="Calendar" />
+          <Tab value="meals" icon={<RestaurantMenuOutlinedIcon fontSize="small" />} iconPosition="start" label="Meals" />
+          <Tab
+            value="tasks"
+            icon={<ChecklistOutlinedIcon fontSize="small" />}
+            iconPosition="start"
+            label={
+              <Box component="span" sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                Tasks
+                {openTaskCount > 0 && (
+                  <Chip label={openTaskCount} size="small" sx={{ height: 20, fontSize: "0.68rem", fontWeight: 800 }} />
+                )}
+              </Box>
+            }
+          />
+        </Tabs>
 
-          <ToggleButtonGroup
-            exclusive
-            value={currentView}
-            onChange={(_, value) => value && setCurrentView(value)}
-            size="small"
-            aria-label="Calendar view"
+        {dashboardSection === "calendar" && (
+          <Box
             sx={{
-              gridColumn: { xs: "1 / -1", md: 2 },
-              gridRow: { xs: 2, md: 1 },
-              justifySelf: "center",
-              p: 0.45,
-              bgcolor: dashboardColors.softSurface,
-              borderRadius: 1.25,
-              "& .MuiToggleButton-root": { border: 0, borderRadius: "7px !important", px: { xs: 1.5, sm: 2.2 }, py: 0.45, color: "text.secondary", fontWeight: 700 },
-              "& .Mui-selected": { bgcolor: "white !important", color: `${dashboardColors.ink} !important`, boxShadow: "0 1px 4px rgba(30, 35, 30, 0.14)" },
+              minHeight: 66,
+              px: { xs: 1.5, sm: 2 },
+              py: 1.25,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr auto", md: "1fr auto 1fr" },
+              alignItems: "center",
+              gap: 1.5,
             }}
           >
-            {CALENDAR_VIEWS.map((view) => (
-              <ToggleButton key={view.value} value={view.value}>{view.label}</ToggleButton>
-            ))}
-          </ToggleButtonGroup>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.8, minWidth: 0, gridColumn: 1, gridRow: 1 }}>
+              <Button variant="outlined" size="small" onClick={() => setCurrentDate(new Date())} sx={{ borderColor: "divider", color: "text.primary", bgcolor: "white" }}>
+                Today
+              </Button>
+              <IconButton size="small" aria-label="Previous week" onClick={() => navigateWeek(-1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
+                <ChevronLeftIcon fontSize="small" />
+              </IconButton>
+              <IconButton size="small" aria-label="Next week" onClick={() => navigateWeek(1)} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "white" }}>
+                <ChevronRightIcon fontSize="small" />
+              </IconButton>
+              <Typography variant="body2" sx={{ fontWeight: 800, ml: 0.4, whiteSpace: "nowrap" }}>
+                {formatWeekRange(currentDate)}
+              </Typography>
+            </Box>
 
-          {currentView !== "wall" && (
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => openNewEvent()}
-              aria-label="Add event"
+            <ToggleButtonGroup
+              exclusive
+              value={currentView}
+              onChange={(_, value) => value && setCurrentView(value)}
+              size="small"
+              aria-label="Calendar view"
               sx={{
-                justifySelf: "end",
-                gridColumn: { xs: 2, md: 3 },
-                gridRow: 1,
-                display: { xs: "none", sm: "inline-flex" },
-                minWidth: { xs: 42, sm: 112 },
-                width: { xs: 42, sm: "auto" },
-                px: { xs: 1, sm: 2 },
-                "& .MuiButton-startIcon": { m: { xs: 0, sm: "0 8px 0 -4px" } },
+                gridColumn: { xs: "1 / -1", md: 2 },
+                gridRow: { xs: 2, md: 1 },
+                justifySelf: "center",
+                p: 0.45,
+                bgcolor: dashboardColors.softSurface,
+                borderRadius: 1.25,
+                "& .MuiToggleButton-root": { border: 0, borderRadius: "7px !important", px: { xs: 1.5, sm: 2.2 }, py: 0.45, color: "text.secondary", fontWeight: 700 },
+                "& .Mui-selected": { bgcolor: "white !important", color: `${dashboardColors.ink} !important`, boxShadow: "0 1px 4px rgba(30, 35, 30, 0.14)" },
               }}
             >
-              <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
-                Add event
-              </Box>
-            </Button>
-          )}
-        </Box>
+              {CALENDAR_VIEWS.map((view) => (
+                <ToggleButton key={view.value} value={view.value}>{view.label}</ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+
+            {currentView !== "wall" && (
+              <Tooltip title="Add event">
+                <IconButton
+                  onClick={() => openNewEvent()}
+                  aria-label="Add event"
+                  sx={{
+                    justifySelf: "end",
+                    gridColumn: { xs: 2, md: 3 },
+                    gridRow: 1,
+                    display: { xs: "none", sm: "inline-flex" },
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    "&:hover": { bgcolor: "primary.dark" },
+                  }}
+                >
+                  <AddIcon />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
+        )}
       </Box>
 
       <Box component="main" sx={{ flex: 1, minHeight: 0 }}>
-        {currentView === "agenda" && (
+        {dashboardSection === "calendar" && currentView === "agenda" && (
           <Box sx={{ width: "100%", maxWidth: 860, mx: "auto", px: { xs: 1.5, sm: 2 }, py: 2.5 }}>
-            <AgendaView events={allEvents} familyMembers={familyMembers} currentDate={currentDate} now={now} onSelectEvent={handleSelectEvent} />
+            <AgendaView
+              key={currentDate.getTime()}
+              events={allEvents}
+              familyMembers={familyMembers}
+              currentDate={currentDate}
+              now={now}
+              onSelectEvent={handleSelectEvent}
+              onUpdateEventChecklist={handleUpdateEventChecklist}
+              onSelectDate={setCurrentDate}
+              timeGrouped
+            />
           </Box>
         )}
 
-        {currentView === "week" && (
+        {dashboardSection === "calendar" && currentView === "week" && (
           <Box
             sx={{
               height: { xs: "calc(100vh - 224px)", md: "calc(100vh - 158px)" },
@@ -712,46 +948,113 @@ export default function CalendarPanel({ onOpenMenu }) {
           </Box>
         )}
 
-        {currentView === "wall" && (
+        {dashboardSection === "calendar" && currentView === "wall" && (
           <Box sx={{ width: "100%", maxWidth: 900, mx: "auto", px: { xs: 1.5, sm: 2 }, py: 2.5, display: "flex", gap: 2.5, alignItems: "flex-start" }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <AgendaView events={allEvents} familyMembers={familyMembers} currentDate={currentDate} now={now} onSelectEvent={handleSelectEvent} focusUpcoming />
+              <AgendaView
+                events={allEvents}
+                familyMembers={familyMembers}
+                currentDate={currentDate}
+                now={now}
+                onSelectEvent={handleSelectEvent}
+                onUpdateEventChecklist={handleUpdateEventChecklist}
+                focusUpcoming
+              />
             </Box>
             <Box sx={{ display: { xs: "none", md: "block" } }}>
               <WallSidebar
                 tomorrowMeals={tomorrowMeals}
+                tasks={wallTasks}
                 familyMembers={familyMembers}
                 hiddenMembers={hiddenMembers}
                 showFamily
                 onToggleMember={toggleMember}
-                onAddEvent={() => openNewEvent()}
+                onToggleTask={handleToggleTask}
+                onOpenTasks={() => setDashboardSection("tasks")}
               />
             </Box>
           </Box>
         )}
+
+        {dashboardSection === "meals" && (
+          <Box sx={{ width: "100%", maxWidth: 1100, mx: "auto", p: { xs: 1.5, sm: 2.5 } }}>
+            <MenuPanel defaultView="week" />
+          </Box>
+        )}
+
+        {dashboardSection === "tasks" && (
+          <TaskPanelContent embedded taskStore={taskStore} />
+        )}
       </Box>
 
-      <Button
-        variant="contained"
-        startIcon={<AddIcon />}
+      <IconButton
+        aria-label="Add event"
         onClick={() => openNewEvent()}
         sx={{
           display: {
-            xs: "inline-flex",
-            sm: currentView === "wall" ? "inline-flex" : "none",
-            md: "none",
+            xs: dashboardSection === "calendar" ? "inline-flex" : "none",
+            sm: dashboardSection === "calendar" && currentView === "wall" ? "inline-flex" : "none",
           },
           position: "fixed",
           right: 18,
-          bottom: 18,
+          bottom: { xs: 82, sm: 18 },
           zIndex: 10,
-          borderRadius: 8,
-          px: 2.2,
+          width: 56,
+          height: 56,
+          bgcolor: "primary.main",
+          color: "primary.contrastText",
           boxShadow: "0 8px 24px rgba(31, 64, 57, 0.24)",
+          "&:hover": { bgcolor: "primary.dark" },
         }}
       >
-        Add event
-      </Button>
+        <AddIcon />
+      </IconButton>
+
+      <BottomNavigation
+        showLabels
+        value={
+          dashboardSection === "tasks"
+            ? "tasks"
+            : dashboardSection === "meals"
+              ? "more"
+              : currentView === "agenda"
+                ? "today"
+                : "calendar"
+        }
+        onChange={(_, destination) => {
+          if (destination === "today") {
+            setDashboardSection("calendar");
+            setCurrentView("agenda");
+            setCurrentDate(new Date());
+          } else if (destination === "calendar") {
+            setDashboardSection("calendar");
+            setCurrentView("week");
+          } else if (destination === "tasks") {
+            setDashboardSection("tasks");
+          } else {
+            onOpenMenu();
+          }
+        }}
+        sx={{
+          display: { xs: "flex", sm: "none" },
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 11,
+          height: 64,
+          borderTop: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+          "& .MuiBottomNavigationAction-root": { minWidth: 0, py: 0.75 },
+          "& .MuiBottomNavigationAction-label": { fontSize: "0.68rem", fontWeight: 700 },
+        }}
+      >
+        <BottomNavigationAction label="Today" value="today" icon={<HomeOutlinedIcon />} />
+        <BottomNavigationAction label="Calendar" value="calendar" icon={<CalendarMonthOutlinedIcon />} />
+        <BottomNavigationAction label="Tasks" value="tasks" icon={<ChecklistOutlinedIcon />} />
+        <BottomNavigationAction label="More" value="more" icon={<MoreHorizIcon />} />
+      </BottomNavigation>
 
       <Dialog open={dialogOpen} onClose={() => { setDialogOpen(false); setEditingEvent(null); }} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ pb: 1 }}>
@@ -761,6 +1064,14 @@ export default function CalendarPanel({ onOpenMenu }) {
           {editingEvent?.source === "google" && <Chip label="Google" size="small" color="primary" sx={{ ml: 1, height: 22 }} />}
         </DialogTitle>
         <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, pt: "8px !important" }}>
+          {!isExistingEvent && (
+            <QuickAddInput
+              key={editingEvent?.id}
+              familyMembers={familyMembers}
+              now={now}
+              onUseDraft={handleUseQuickAddDraft}
+            />
+          )}
           <TextField autoFocus label="Event title" value={editingEvent?.title || ""} onChange={(e) => setEditingEvent((previous) => ({ ...previous, title: e.target.value }))} fullWidth size="small" />
           <FormControl fullWidth size="small">
             <InputLabel>Person</InputLabel>
@@ -769,7 +1080,9 @@ export default function CalendarPanel({ onOpenMenu }) {
               label="Person"
               onChange={(e) => {
                 const member = familyMembers.find((candidate) => candidate.name === e.target.value);
-                setEditingEvent((previous) => ({ ...previous, owner: member.name, calendarId: member.calendarId, color: member.color }));
+                if (member) {
+                  setEditingEvent((previous) => ({ ...previous, owner: member.name, calendarId: member.calendarId, color: member.color }));
+                }
               }}
             >
               {familyMembers.map((member) => {
@@ -783,32 +1096,90 @@ export default function CalendarPanel({ onOpenMenu }) {
               })}
             </Select>
           </FormControl>
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={Boolean(editingEvent?.allDay)}
+                onChange={(e) => {
+                  const useAnytime = e.target.checked;
+                  setEditingEvent((previous) => {
+                    if (useAnytime) {
+                      const dateValue = previous.scheduleDate || (isValid(previous.start) ? format(previous.start, "yyyy-MM-dd") : format(now, "yyyy-MM-dd"));
+                      const nextStart = new Date(`${dateValue}T00:00:00`);
+                      return {
+                        ...previous,
+                        allDay: true,
+                        scheduleDate: dateValue,
+                        start: nextStart,
+                        end: addDays(nextStart, 1),
+                        recurrence: updateRecurrenceForStartChange(previous.recurrence, previous.start, nextStart),
+                      };
+                    }
+                    return {
+                      ...previous,
+                      allDay: false,
+                      scheduleDate: previous.scheduleDate || (isValid(previous.start) ? format(previous.start, "yyyy-MM-dd") : null),
+                      start: null,
+                      end: null,
+                    };
+                  });
+                }}
+                size="small"
+              />
+            }
+            label="Anytime (no fixed time)"
+          />
+          {editingEvent?.allDay ? (
             <TextField
-              label="Start"
-              type="datetime-local"
-              value={editingEvent ? format(editingEvent.start, "yyyy-MM-dd'T'HH:mm") : ""}
+              label="Date"
+              type="date"
+              value={editingEvent.scheduleDate || (isValid(editingEvent.start) ? format(editingEvent.start, "yyyy-MM-dd") : "")}
               onChange={(e) => {
-                const nextStart = new Date(e.target.value);
-                setEditingEvent((previous) => ({ ...previous, start: nextStart, recurrence: updateRecurrenceForStartChange(previous.recurrence, previous.start, nextStart) }));
+                const dateValue = e.target.value;
+                setEditingEvent((previous) => {
+                  const nextStart = dateValue ? new Date(`${dateValue}T00:00:00`) : null;
+                  return {
+                    ...previous,
+                    scheduleDate: dateValue,
+                    start: nextStart,
+                    end: nextStart ? addDays(nextStart, 1) : null,
+                    recurrence: updateRecurrenceForStartChange(previous.recurrence, previous.start, nextStart),
+                  };
+                });
               }}
               fullWidth
               size="small"
               InputLabelProps={{ shrink: true }}
             />
-            <TextField
-              label="End"
-              type="datetime-local"
-              value={editingEvent ? format(editingEvent.end, "yyyy-MM-dd'T'HH:mm") : ""}
-              onChange={(e) => setEditingEvent((previous) => ({ ...previous, end: new Date(e.target.value) }))}
-              fullWidth
-              size="small"
-              error={Boolean(editingEvent && editingEvent.end <= editingEvent.start)}
-              helperText={editingEvent && editingEvent.end <= editingEvent.start ? "End must be after start" : ""}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Box>
+          ) : (
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
+              <TextField
+                label="Start"
+                type="datetime-local"
+                value={isValid(editingEvent?.start) ? format(editingEvent.start, "yyyy-MM-dd'T'HH:mm") : ""}
+                onChange={(e) => {
+                  const nextStart = e.target.value ? new Date(e.target.value) : null;
+                  setEditingEvent((previous) => ({ ...previous, scheduleDate: nextStart ? format(nextStart, "yyyy-MM-dd") : previous.scheduleDate, start: nextStart, recurrence: updateRecurrenceForStartChange(previous.recurrence, previous.start, nextStart) }));
+                }}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="End"
+                type="datetime-local"
+                value={isValid(editingEvent?.end) ? format(editingEvent.end, "yyyy-MM-dd'T'HH:mm") : ""}
+                onChange={(e) => setEditingEvent((previous) => ({ ...previous, end: e.target.value ? new Date(e.target.value) : null }))}
+                fullWidth
+                size="small"
+                error={Boolean(hasValidStart && hasValidEnd && editingEvent.end <= editingEvent.start)}
+                helperText={hasValidStart && hasValidEnd && editingEvent.end <= editingEvent.start ? "End must be after start" : ""}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Box>
+          )}
           <RecurrenceFields event={editingEvent} onChange={setEditingEvent} />
+          <TextField label="Location (optional)" value={editingEvent?.location || ""} onChange={(e) => setEditingEvent((previous) => ({ ...previous, location: e.target.value }))} fullWidth size="small" />
           <TextField label="Notes (optional)" value={editingEvent?.description || ""} onChange={(e) => setEditingEvent((previous) => ({ ...previous, description: e.target.value }))} multiline minRows={2} fullWidth size="small" />
           <EventChecklistEditor value={editingEvent?.checklist || []} onChange={(checklist) => setEditingEvent((previous) => ({ ...previous, checklist }))} />
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
@@ -817,12 +1188,12 @@ export default function CalendarPanel({ onOpenMenu }) {
               label={
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.6 }}>
                   {reminderEnabled ? <NotificationsActiveIcon sx={{ fontSize: 17, color: "primary.main" }} /> : <NotificationsOffIcon sx={{ fontSize: 17, color: "text.disabled" }} />}
-                  <Typography variant="body2">Reminder</Typography>
+                  <Typography variant="body2">Leave reminder</Typography>
                 </Box>
               }
             />
             {reminderEnabled && (
-              <TextField label="Minutes before" type="number" value={reminderMinutes} onChange={(e) => setReminderMinutes(Math.max(1, Number.parseInt(e.target.value, 10) || 15))} size="small" sx={{ width: 145 }} inputProps={{ min: 1 }} />
+              <TextField label="Leave minutes before" type="number" value={reminderMinutes} onChange={(e) => setReminderMinutes(Math.max(1, Number.parseInt(e.target.value, 10) || 15))} size="small" sx={{ width: 190 }} inputProps={{ min: 1 }} />
             )}
           </Box>
         </DialogContent>

@@ -1,6 +1,6 @@
 # Family Dashboard
 
-A responsive household dashboard with account-based and managed family profiles, Google Calendar integration, recurring events, meals, recipes, and reminders.
+A responsive household dashboard with account-based and managed family profiles, Google Calendar integration, recurring events, meals, recipes, and reminders. Household owners can designate child profiles and optionally enable separate, named lunch columns for each child.
 
 See [ARCHITECTURE_AND_DATA.md](./ARCHITECTURE_AND_DATA.md) for the complete data model, privacy boundaries, cost model, sign-in flow, Google Calendar behavior, setup instructions, and production checklist.
 
@@ -42,6 +42,28 @@ Calendar access is separate from dashboard sign-in. Users can enter the dashboar
 For a household to see each member's events, members must share the relevant Google calendars with one another. Each new member's calendar ID defaults to their Google email address.
 
 Dashboard events are always saved to Firestore, so they remain visible to household members who have not connected Calendar. When Calendar is connected, new dashboard events are also mirrored to the selected member's Google calendar. External Google events are visible only while that user has Calendar connected.
+
+## AI Quick Add setup
+
+Quick Add always runs the local deterministic parser first. When that parser cannot confidently understand a sentence, the event preview offers an optional AI fallback. The AI response only fills the editable event form; it never creates an event automatically.
+
+The OpenAI API key is stored in Google Cloud Secret Manager and is available only to the authenticated Firebase callable function. Never add it to `.env` or any `VITE_` variable.
+
+1. Select the Firebase project and make sure it is on the Blaze plan, which is required to deploy Cloud Functions.
+2. Store the OpenAI API key securely:
+
+   ```sh
+   firebase functions:secrets:set OPENAI_API_KEY
+   ```
+
+3. Build the updated UI and deploy it with the callable function:
+
+   ```sh
+   npm run build
+   firebase deploy --only functions,hosting
+   ```
+
+The function sends only the Quick Add sentence, the current date/time zone, and family member IDs and display names. It does not send email addresses or write calendar data.
 
 ## Development
 

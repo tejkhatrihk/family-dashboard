@@ -49,6 +49,7 @@ export async function fetchGoogleEvents(
     source: "google",
     calendarId,
     description: item.description || "",
+    location: item.location || "",
     checklist: parseChecklist(item),
     recurrenceParentId: item.recurringEventId,
     reminderId: item.recurringEventId || item.id,
@@ -62,6 +63,7 @@ function buildGoogleEventBody(event) {
   return {
     summary: event.title,
     description: event.description || "",
+    location: event.location || "",
     extendedProperties: {
       private: {
         [CHECKLIST_PROPERTY]: JSON.stringify(event.checklist || []),

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "node --test src/features/meals/services/*.test.js src/features/dashboard/services/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

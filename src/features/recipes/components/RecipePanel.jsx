@@ -20,7 +20,18 @@ const EMPTY_RECIPE = {
   name: '',
   ingredients: [],
   instructions: '',
+  prepSteps: [],
+  leadHours: '',
 };
+
+function createRecipeDraft(recipe) {
+  return {
+    ...EMPTY_RECIPE,
+    ...recipe,
+    ingredients: recipe?.ingredients || [],
+    prepSteps: recipe?.prepSteps || [],
+  };
+}
 
 /**
  * Loosely-coupled recipe panel — can be embedded on a page or inside a dialog.
@@ -41,11 +52,21 @@ export default function RecipePanel({
 }) {
   const isNew = !recipe;
   const [editing, setEditing] = useState(isNew);
-  const [draft, setDraft] = useState(recipe ?? EMPTY_RECIPE);
+  const [draft, setDraft] = useState(() => createRecipeDraft(recipe));
+  const hasPrepSteps = draft.prepSteps.some((step) => step.trim());
+  const validLeadHours =
+    !hasPrepSteps ||
+    (draft.leadHours !== '' &&
+      Number.isFinite(Number(draft.leadHours)) &&
+      Number(draft.leadHours) >= 0);
 
   const handleSave = () => {
-    if (!draft.name.trim()) return;
-    onSave?.(draft);
+    if (!draft.name.trim() || !validLeadHours) return;
+    onSave?.({
+      ...draft,
+      prepSteps: draft.prepSteps.map((step) => step.trim()).filter(Boolean),
+      leadHours: hasPrepSteps ? Number(draft.leadHours) : null,
+    });
     if (!isNew) setEditing(false);
   };
 
@@ -53,7 +74,7 @@ export default function RecipePanel({
     if (isNew) {
       onCancel?.();
     } else {
-      setDraft(recipe);
+      setDraft(createRecipeDraft(recipe));
       setEditing(false);
     }
   };
@@ -92,6 +113,37 @@ export default function RecipePanel({
             placeholder="Describe the preparation steps…"
           />
 
+          <Divider />
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>
+              Prep reminders
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Optional. Enter only timing and steps you know; the app will not guess them.
+            </Typography>
+          </Box>
+          <TextField
+            label="Prep lead time (hours)"
+            type="number"
+            value={draft.leadHours ?? ''}
+            onChange={(e) => setDraft((current) => ({ ...current, leadHours: e.target.value }))}
+            size="small"
+            inputProps={{ min: 0, step: 0.5 }}
+            error={!validLeadHours}
+            helperText={!validLeadHours ? "Enter the recipe's required lead time." : "Stored once for this recipe."}
+          />
+          <TextField
+            label="Prep steps"
+            value={draft.prepSteps.join('\n')}
+            onChange={(e) => setDraft((current) => ({ ...current, prepSteps: e.target.value.split('\n') }))}
+            fullWidth
+            multiline
+            minRows={2}
+            size="small"
+            placeholder={"Soak chickpeas\nDefrost sauce"}
+            helperText="Enter one reminder step per line."
+          />
+
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button size="small" onClick={handleCancel}>
               Cancel
@@ -101,7 +153,7 @@ export default function RecipePanel({
               size="small"
               startIcon={<SaveIcon />}
               onClick={handleSave}
-              disabled={!draft.name.trim()}
+              disabled={!draft.name.trim() || !validLeadHours}
             >
               {isNew ? 'Save Recipe' : 'Update Recipe'}
             </Button>
@@ -202,6 +254,26 @@ export default function RecipePanel({
           </Typography>
         </>
       ) : null}
+
+      {draft.prepSteps.length > 0 && (
+        <>
+          <Divider sx={{ my: 1.5 }} />
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}
+          >
+            Prep reminders · {draft.leadHours} hours before
+          </Typography>
+          <List dense disablePadding sx={{ mt: 0.5 }}>
+            {draft.prepSteps.map((step) => (
+              <ListItem key={step} sx={{ py: 0.25, px: 0 }}>
+                <ListItemText primary={`• ${step}`} primaryTypographyProps={{ variant: 'body2' }} />
+              </ListItem>
+            ))}
+          </List>
+        </>
+      )}
     </Paper>
   );
 }

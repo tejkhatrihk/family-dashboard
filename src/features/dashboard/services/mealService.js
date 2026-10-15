@@ -7,23 +7,24 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { firestore } from "../../../shared/api/firebaseClient";
+import {
+  getMealsForDate as getMealsFromMenu,
+  MENU_STORAGE_KEY,
+  MEAL_EMOJI,
+  MEAL_LABELS,
+  MEAL_TYPES,
+  normalizeMealEntry,
+  toDateKey,
+} from "./mealPlanUtils.js";
 
-export const MENU_STORAGE_KEY = "family_weekly_menu";
-
-export const MEAL_TYPES = ["Breakfast", "Lunch", "Kaira-Lunch", "Dinner"];
-export const MEAL_EMOJI = {
-  Breakfast: "🍳",
-  Lunch: "🍛",
-  "Kaira-Lunch": "🥗",
-  Dinner: "🍽️",
+export {
+  MENU_STORAGE_KEY,
+  MEAL_EMOJI,
+  MEAL_LABELS,
+  MEAL_TYPES,
+  normalizeMealEntry,
+  toDateKey,
 };
-
-export function toDateKey(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 export function loadMenu() {
   try {
@@ -33,11 +34,8 @@ export function loadMenu() {
   }
 }
 
-export function getMealsForDate(date, menu = loadMenu()) {
-  const meals = menu[toDateKey(date)] || {};
-  return MEAL_TYPES.map((type) => ({ type, value: meals[type] || "" })).filter(
-    (meal) => meal.value.trim(),
-  );
+export function getMealsForDate(date, menu = loadMenu(), options) {
+  return getMealsFromMenu(date, menu, options);
 }
 
 export function subscribeToHouseholdMenu(householdId, onValue, onError) {
@@ -54,10 +52,30 @@ export function subscribeToHouseholdMenu(householdId, onValue, onError) {
 }
 
 export async function setHouseholdMeal(householdId, date, mealType, value) {
+  const entry = normalizeMealEntry(value);
   await setDoc(
     doc(firestore, "households", householdId, "menus", toDateKey(date)),
     {
-      [mealType]: value.trim() ? value : deleteField(),
+      [mealType]: entry.name.trim() ? entry : deleteField(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export async function setHouseholdChildMeal(
+  householdId,
+  date,
+  childId,
+  value,
+) {
+  const entry = normalizeMealEntry(value);
+  await setDoc(
+    doc(firestore, "households", householdId, "menus", toDateKey(date)),
+    {
+      childMeals: {
+        [childId]: entry.name.trim() ? entry : deleteField(),
+      },
       updatedAt: serverTimestamp(),
     },
     { merge: true },

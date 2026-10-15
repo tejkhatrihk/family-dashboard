@@ -2,8 +2,11 @@ import ClearIcon from "@mui/icons-material/Clear";
 import NavigateBeforeIcon from "@mui/icons-material/NavigateBefore";
 import NavigateNextIcon from "@mui/icons-material/NavigateNext";
 import {
+  Alert,
   Box,
+  Checkbox,
   Chip,
+  FormControlLabel,
   IconButton,
   Paper,
   Table,
@@ -18,16 +21,26 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHouseholdMenu } from "../../features/dashboard/hooks/useHouseholdMenu";
+import { useHousehold } from "../../features/household/api/householdContext";
+import { useRecipes } from "../../features/recipes/hooks/useRecipes";
+import { createRecipePrepReminders } from "../../features/meals/services/mealPrepReminderService";
 import {
   MEAL_EMOJI,
+  MEAL_LABELS,
   MEAL_TYPES,
+  normalizeMealEntry,
   toDateKey,
 } from "../../features/dashboard/services/mealService";
 
 // ── helpers ────────────────────────────────────────────────────────────
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MENU_SAVE_DELAY = 600;
+
+function getMealCellKey(date, meal) {
+  return `${toDateKey(date)}_${meal}`;
+}
 
 /** Return the Monday of the week that contains `date`. */
 function getMonday(date) {
@@ -63,10 +76,49 @@ function formatDate(date) {
 }
 
 // ── component ──────────────────────────────────────────────────────────
-export default function MenuPanel() {
-  const { menu, setMeal } = useHouseholdMenu();
+export default function MenuPanel({ defaultView = "today" }) {
+  const { menu, setMeal, setChildMeal } = useHouseholdMenu();
+  const { household, members, isOwner, setChildrenMealPlansEnabled } =
+    useHousehold();
+  const { recipes } = useRecipes();
   const [weekOffset, setWeekOffset] = useState(0);
-  const [view, setView] = useState("today"); // "today" | "week"
+  const [view, setView] = useState(defaultView); // "today" | "week"
+  const [draftEntries, setDraftEntries] = useState({});
+  const [childrenMealError, setChildrenMealError] = useState(null);
+  const draftEntriesRef = useRef(draftEntries);
+  const pendingEntriesRef = useRef(new Map());
+  const childMembers = useMemo(
+    () =>
+      members
+        .filter((member) => member.isChild)
+        .sort((first, second) =>
+          String(first.displayName || "").localeCompare(
+            String(second.displayName || ""),
+          ),
+        ),
+    [members],
+  );
+  const showChildMealColumns =
+    Boolean(household?.childrenMealPlansEnabled) && childMembers.length > 0;
+  const mealColumns = useMemo(
+    () => [
+      ...MEAL_TYPES.filter((meal) => meal !== "Kaira-Lunch").map((meal) => ({
+        key: meal,
+        meal,
+        label: MEAL_LABELS[meal],
+        emoji: MEAL_EMOJI[meal],
+      })),
+      ...(showChildMealColumns
+        ? childMembers.map((child) => ({
+            key: `child-${child.uid}`,
+            childId: child.uid,
+            label: `${child.displayName} lunch`,
+            emoji: MEAL_EMOJI["Kaira-Lunch"],
+          }))
+        : []),
+    ],
+    [childMembers, showChildMealColumns],
+  );
 
   const monday = useMemo(() => {
     const m = getMonday(new Date());
@@ -97,24 +149,101 @@ export default function MenuPanel() {
     return [{ day: DAY_LABELS[0], idx: 0 }];
   }, [view, weekDates]);
 
-  const getValue = useCallback(
+  const getEntry = useCallback(
     (dayIdx, meal) => {
       const key = toDateKey(weekDates[dayIdx]);
-      return menu[key]?.[meal] || "";
+      return normalizeMealEntry(menu[key]?.[meal]);
     },
     [menu, weekDates],
   );
 
-  const setValue = useCallback(
-    (dayIdx, meal, value) => {
-      setMeal(weekDates[dayIdx], meal, value).catch(console.error);
+  const getChildEntry = useCallback(
+    (dayIdx, childId) => {
+      const key = toDateKey(weekDates[dayIdx]);
+      return normalizeMealEntry(menu[key]?.childMeals?.[childId]);
     },
-    [setMeal, weekDates],
+    [menu, weekDates],
+  );
+
+  const saveEntry = useCallback(
+    (pending) => {
+      const save = pending.childId
+        ? setChildMeal(pending.date, pending.childId, pending.entry)
+        : setMeal(pending.date, pending.meal, pending.entry);
+      save.catch(console.error);
+    },
+    [setChildMeal, setMeal],
+  );
+
+  const flushPendingEntry = useCallback(
+    (key) => {
+      const pending = pendingEntriesRef.current.get(key);
+      if (!pending) return;
+
+      clearTimeout(pending.timeout);
+      pendingEntriesRef.current.delete(key);
+      const nextDrafts = { ...draftEntriesRef.current };
+      delete nextDrafts[key];
+      draftEntriesRef.current = nextDrafts;
+      setDraftEntries(nextDrafts);
+      saveEntry(pending);
+    },
+    [saveEntry],
+  );
+
+  const updateEntry = useCallback(
+    (dayIdx, meal, patch, childId = null) => {
+      const date = weekDates[dayIdx];
+      const key = getMealCellKey(date, childId ? `child-${childId}` : meal);
+      const currentEntry =
+        draftEntriesRef.current[key] ||
+        (childId ? getChildEntry(dayIdx, childId) : getEntry(dayIdx, meal));
+      const nextEntry = { ...currentEntry, ...patch };
+      if (Object.hasOwn(patch, "name")) {
+        const matchingRecipe = recipes.find(
+          (recipe) =>
+            recipe.name.trim().toLowerCase() ===
+            nextEntry.name.trim().toLowerCase(),
+        );
+        nextEntry.recipeId = matchingRecipe?.id || null;
+      }
+
+      draftEntriesRef.current = {
+        ...draftEntriesRef.current,
+        [key]: nextEntry,
+      };
+      setDraftEntries(draftEntriesRef.current);
+
+      const pending = pendingEntriesRef.current.get(key);
+      if (pending) clearTimeout(pending.timeout);
+      const timeout = setTimeout(() => flushPendingEntry(key), MENU_SAVE_DELAY);
+      pendingEntriesRef.current.set(key, {
+        timeout,
+        date,
+        meal,
+        childId,
+        entry: nextEntry,
+      });
+    },
+    [flushPendingEntry, getChildEntry, getEntry, recipes, weekDates],
   );
 
   const clearCell = useCallback(
-    (dayIdx, meal) => setValue(dayIdx, meal, ""),
-    [setValue],
+    (dayIdx, meal, childId = null) =>
+      updateEntry(dayIdx, meal, { name: "" }, childId),
+    [updateEntry],
+  );
+
+  useEffect(
+    () => () => {
+      pendingEntriesRef.current.forEach((pending) => {
+        const { timeout } = pending;
+        clearTimeout(timeout);
+        saveEntry(pending);
+      });
+      pendingEntriesRef.current.clear();
+    },
+    [saveEntry],
   );
 
   const handleViewChange = (_, newView) => {
@@ -129,6 +258,43 @@ export default function MenuPanel() {
     view === "week"
       ? formatWeekRange(monday)
       : formatDate(weekDates[visibleDays[0]?.idx ?? 0]);
+
+  const prepReminders = (() => {
+    const currentTime = new Date();
+    return visibleDays.flatMap(({ idx: dayIdx }) => {
+      const dinner = getEntry(dayIdx, "Dinner");
+      if (!dinner.name || !dinner.scheduledTime) return [];
+
+      const recipe =
+        recipes.find((candidate) => candidate.id === dinner.recipeId) ||
+        recipes.find(
+          (candidate) =>
+            candidate.name.trim().toLowerCase() ===
+            dinner.name.trim().toLowerCase(),
+        );
+      if (
+        !recipe?.prepSteps?.length ||
+        recipe.leadHours == null ||
+        !Number.isFinite(Number(recipe.leadHours))
+      ) {
+        return [];
+      }
+
+      const dateKey = toDateKey(weekDates[dayIdx]);
+      const scheduledMeal = new Date(`${dateKey}T${dinner.scheduledTime}:00`);
+      if (Number.isNaN(scheduledMeal.getTime()) || scheduledMeal <= currentTime)
+        return [];
+
+      return createRecipePrepReminders(
+        recipe,
+        scheduledMeal.toISOString(),
+        currentTime.toISOString(),
+      ).map((reminder, index) => ({
+        ...reminder,
+        id: `${dateKey}_${recipe.id}_${index}`,
+      }));
+    });
+  })();
 
   return (
     <Paper
@@ -220,6 +386,37 @@ export default function MenuPanel() {
         </Box>
       </Box>
 
+      {childMembers.length > 0 && (
+        <Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={Boolean(household?.childrenMealPlansEnabled)}
+                disabled={!isOwner}
+                onChange={(event) => {
+                  setChildrenMealError(null);
+                  setChildrenMealPlansEnabled(event.target.checked).catch(
+                    setChildrenMealError,
+                  );
+                }}
+              />
+            }
+            label="Add meal plans for children"
+            sx={{
+              ml: 0,
+              "& .MuiFormControlLabel-label": { fontSize: "0.85rem" },
+            }}
+          />
+          {childrenMealError && (
+            <Alert severity="error" sx={{ mt: 0.5 }}>
+              Could not update the child meal plan setting:{" "}
+              {childrenMealError.message}
+            </Alert>
+          )}
+        </Box>
+      )}
+
       {/* Meal grid */}
       <TableContainer sx={{ maxHeight: view === "week" ? 400 : "none" }}>
         <Table size="small" stickyHeader>
@@ -230,19 +427,20 @@ export default function MenuPanel() {
                   Day
                 </TableCell>
               )}
-              {MEAL_TYPES.map((meal) => (
+              {mealColumns.map((column) => (
                 <TableCell
-                  key={meal}
+                  key={column.key}
                   align="center"
                   sx={{ fontWeight: 700, py: 0.5 }}
                 >
-                  {MEAL_EMOJI[meal]} {meal}
+                  {column.emoji} {column.label}
                 </TableCell>
               ))}
             </TableRow>
           </TableHead>
           <TableBody>
             {visibleDays.map(({ day, idx: dayIdx }) => {
+              const dateLabel = formatDate(weekDates[dayIdx]);
               const dateStr = weekDates[dayIdx].toLocaleDateString("en-IN", {
                 day: "numeric",
               });
@@ -268,33 +466,84 @@ export default function MenuPanel() {
                       {day} {dateStr}
                     </TableCell>
                   )}
-                  {MEAL_TYPES.map((meal) => {
-                    const val = getValue(dayIdx, meal);
+                  {mealColumns.map((column) => {
+                    const { meal, childId } = column;
+                    const cellKey = getMealCellKey(
+                      weekDates[dayIdx],
+                      childId ? `child-${childId}` : meal,
+                    );
+                    const entry =
+                      draftEntries[cellKey] ||
+                      (childId
+                        ? getChildEntry(dayIdx, childId)
+                        : getEntry(dayIdx, meal));
+                    const val = entry.name;
                     return (
-                      <TableCell key={meal} sx={{ py: 0.25, px: 0.5 }}>
-                        <Box sx={{ display: "flex", alignItems: "center" }}>
-                          <TextField
-                            variant="standard"
-                            size="small"
-                            placeholder="+ add meal"
-                            value={val}
-                            onChange={(e) =>
-                              setValue(dayIdx, meal, e.target.value)
-                            }
-                            InputProps={{
-                              disableUnderline: !val,
-                              sx: { fontSize: "0.8rem" },
-                            }}
-                            fullWidth
-                          />
-                          {val && (
-                            <IconButton
+                      <TableCell key={column.key} sx={{ py: 0.25, px: 0.5 }}>
+                        <Box>
+                          <Box sx={{ display: "flex", alignItems: "center" }}>
+                            <TextField
+                              variant="standard"
                               size="small"
-                              onClick={() => clearCell(dayIdx, meal)}
-                              sx={{ ml: -1, opacity: 0.5 }}
-                            >
-                              <ClearIcon sx={{ fontSize: 14 }} />
-                            </IconButton>
+                              placeholder="+ add meal"
+                              value={val}
+                              onChange={(e) =>
+                                updateEntry(
+                                  dayIdx,
+                                  meal,
+                                  { name: e.target.value },
+                                  childId,
+                                )
+                              }
+                              onBlur={() => flushPendingEntry(cellKey)}
+                              InputProps={{
+                                disableUnderline: !val,
+                                sx: { fontSize: "0.8rem" },
+                              }}
+                              inputProps={{
+                                list: "saved-recipe-names",
+                                "aria-label": `${column.label} for ${dateLabel}`,
+                              }}
+                              fullWidth
+                            />
+                            {val && (
+                              <IconButton
+                                size="small"
+                                onClick={() => clearCell(dayIdx, meal, childId)}
+                                sx={{ ml: -1, opacity: 0.5 }}
+                              >
+                                <ClearIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            )}
+                          </Box>
+                          {meal === "Dinner" && val && (
+                            <TextField
+                              type="time"
+                              variant="standard"
+                              value={entry.scheduledTime}
+                              onChange={(event) =>
+                                updateEntry(
+                                  dayIdx,
+                                  meal,
+                                  {
+                                    scheduledTime: event.target.value,
+                                  },
+                                  childId,
+                                )
+                              }
+                              onBlur={() => flushPendingEntry(cellKey)}
+                              inputProps={{
+                                "aria-label": `Dinner time for ${dateLabel}`,
+                              }}
+                              InputProps={{
+                                sx: {
+                                  fontSize: "0.72rem",
+                                  color: "text.secondary",
+                                },
+                              }}
+                              fullWidth
+                              sx={{ mt: 0.25 }}
+                            />
                           )}
                         </Box>
                       </TableCell>
@@ -306,6 +555,37 @@ export default function MenuPanel() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      <datalist id="saved-recipe-names">
+        {recipes.map((recipe) => (
+          <option key={recipe.id} value={recipe.name} />
+        ))}
+      </datalist>
+
+      {prepReminders.length > 0 && (
+        <Box
+          sx={{
+            mt: 1,
+            pt: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+            Prep reminders
+          </Typography>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {prepReminders.map((reminder) => (
+              <Alert
+                key={reminder.id}
+                severity={reminder.status === "too_late" ? "warning" : "info"}
+              >
+                {reminder.message}
+              </Alert>
+            ))}
+          </Box>
+        </Box>
+      )}
     </Paper>
   );
 }

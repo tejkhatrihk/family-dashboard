@@ -15,15 +15,28 @@ function getExpiryKey(userId) {
   return `google_calendar_token_expires_at_${userId}`;
 }
 
+function clearLegacyLocalTokens() {
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (
+      key?.startsWith("google_calendar_access_token_") ||
+      key?.startsWith("google_calendar_token_expires_at_")
+    ) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 function loadActiveToken(userId) {
+  clearLegacyLocalTokens();
   if (!userId) return null;
   const tokenKey = getTokenKey(userId);
   const expiryKey = getExpiryKey(userId);
-  const token = localStorage.getItem(tokenKey);
-  const expiresAt = Number(localStorage.getItem(expiryKey) || 0);
+  const token = sessionStorage.getItem(tokenKey);
+  const expiresAt = Number(sessionStorage.getItem(expiryKey) || 0);
   if (!token || (expiresAt && Date.now() >= expiresAt)) {
-    localStorage.removeItem(tokenKey);
-    localStorage.removeItem(expiryKey);
+    sessionStorage.removeItem(tokenKey);
+    sessionStorage.removeItem(expiryKey);
     return null;
   }
   return token;
@@ -41,8 +54,8 @@ function GoogleCalendarInner({ children, userId }) {
       const expiresAt = Date.now() + (tokenResponse.expires_in ?? 3600) * 1000;
       setAccessToken(tokenResponse.access_token);
       setSessionExpired(false);
-      localStorage.setItem(tokenKey, tokenResponse.access_token);
-      localStorage.setItem(expiryKey, String(expiresAt));
+      sessionStorage.setItem(tokenKey, tokenResponse.access_token);
+      sessionStorage.setItem(expiryKey, String(expiresAt));
     },
     onError: (error) => console.error("Google Calendar connection failed:", error),
   });
@@ -50,16 +63,16 @@ function GoogleCalendarInner({ children, userId }) {
   const disconnectCalendar = useCallback(() => {
     setAccessToken(null);
     setSessionExpired(false);
-    localStorage.removeItem(tokenKey);
-    localStorage.removeItem(expiryKey);
+    sessionStorage.removeItem(tokenKey);
+    sessionStorage.removeItem(expiryKey);
   }, [expiryKey, tokenKey]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      const expiresAt = Number(localStorage.getItem(expiryKey) || 0);
+      const expiresAt = Number(sessionStorage.getItem(expiryKey) || 0);
       if (expiresAt && Date.now() >= expiresAt) {
-        localStorage.removeItem(tokenKey);
-        localStorage.removeItem(expiryKey);
+        sessionStorage.removeItem(tokenKey);
+        sessionStorage.removeItem(expiryKey);
         setAccessToken(null);
         setSessionExpired(true);
       }

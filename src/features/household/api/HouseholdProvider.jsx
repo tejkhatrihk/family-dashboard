@@ -5,6 +5,7 @@ import {
   createHouseholdInvite,
   createManagedHouseholdMember,
   joinHousehold as joinHouseholdWithCode,
+  setHouseholdChildrenMealPlansEnabled as setChildrenMealPlansEnabledRecord,
   subscribeToHousehold,
   subscribeToHouseholdMembers,
   subscribeToUserProfile,
@@ -123,6 +124,11 @@ function HouseholdSession({ children, user, isConfigured }) {
     [householdId],
   );
 
+  const setChildrenMealPlansEnabled = useCallback(
+    (enabled) => setChildrenMealPlansEnabledRecord(householdId, enabled),
+    [householdId],
+  );
+
   const value = useMemo(
     () => ({
       household,
@@ -135,6 +141,7 @@ function HouseholdSession({ children, user, isConfigured }) {
       inviteMember,
       addManagedMember,
       updateMember,
+      setChildrenMealPlansEnabled,
       isOwner: household?.ownerId === user?.uid,
     }),
     [
@@ -147,6 +154,7 @@ function HouseholdSession({ children, user, isConfigured }) {
       joinHousehold,
       loading,
       members,
+      setChildrenMealPlansEnabled,
       updateMember,
       user?.uid,
     ],

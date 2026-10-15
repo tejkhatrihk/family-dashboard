@@ -65,6 +65,10 @@ export function updateRecurrenceForStartChange(
   nextStart,
 ) {
   if (recurrence?.frequency !== "weekly") return recurrence;
+  if (!nextStart) return recurrence;
+  if (!previousStart) {
+    return { ...recurrence, weekdays: [getWeekdayValue(nextStart)] };
+  }
 
   const previousDay = getWeekdayValue(previousStart);
   if (
@@ -80,6 +84,7 @@ export function updateRecurrenceForStartChange(
 export function isRecurrenceValid(event) {
   const recurrence = event?.recurrence;
   if (!recurrence) return true;
+  if (!event?.start) return false;
 
   if (
     recurrence.frequency === "weekly" &&
@@ -100,6 +105,7 @@ export function isRecurrenceValid(event) {
 export function getRecurrenceValidationMessage(event) {
   const recurrence = event?.recurrence;
   if (!recurrence) return "";
+  if (!event?.start) return "Choose a start date and time for this repeating event.";
 
   if (
     recurrence.frequency === "weekly" &&

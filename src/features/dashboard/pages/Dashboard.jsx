@@ -21,7 +21,6 @@ import RecipesPage from "@/features/recipes/pages/RecipesPage";
 import HouseholdPanel from "@/features/household/components/HouseholdPanel";
 import { useFirebaseAuth } from "@/shared/api/firebaseAuthContext";
 import { useGoogleCalendar } from "@/shared/api/googleCalendarContext";
-import MenuPanel from "@/shared/components/MenuPanel";
 import CalendarPanel from "../components/CalendarPanel";
 import ShoppingListPanel from "../components/ShoppingListPanel";
 
@@ -67,7 +66,7 @@ export default function Dashboard() {
             Family Dashboard
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            Calendar, meals and recipes in one place
+            Calendar, tasks, meals and recipes in one place
           </Typography>
         </Box>
 
@@ -88,8 +87,6 @@ export default function Dashboard() {
         <Divider />
         <Box sx={{ flex: 1, overflowY: "auto", p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
           <HouseholdPanel />
-          <Divider />
-          <MenuPanel />
           <ShoppingListPanel onAddRecipe={() => navigate("recipes")} />
         </Box>
 
@@ -123,7 +120,9 @@ export default function Dashboard() {
         </Box>
       </Drawer>
 
-      {currentView === "dashboard" && <CalendarPanel onOpenMenu={() => setDrawerOpen(true)} />}
+      {currentView === "dashboard" && (
+        <CalendarPanel onOpenMenu={() => setDrawerOpen(true)} />
+      )}
 
       {currentView === "recipes" && (
         <Box sx={{ minHeight: "100vh" }}>

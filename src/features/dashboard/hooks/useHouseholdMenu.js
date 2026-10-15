@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useHousehold } from "../../household/api/householdContext";
 import {
   migrateLocalMenu,
+  normalizeMealEntry,
+  setHouseholdChildMeal,
   setHouseholdMeal,
   subscribeToHouseholdMenu,
   toDateKey,
@@ -44,5 +46,26 @@ export function useHouseholdMenu() {
     [householdId],
   );
 
-  return { menu, loading, setMeal };
+  const setChildMeal = useCallback(
+    (date, childId, value) => {
+      const dateKey = toDateKey(date);
+      const entry = normalizeMealEntry(value);
+      setMenu((previous) => {
+        const childMeals = { ...previous[dateKey]?.childMeals };
+        if (entry.name.trim()) childMeals[childId] = entry;
+        else delete childMeals[childId];
+        return {
+          ...previous,
+          [dateKey]: {
+            ...previous[dateKey],
+            childMeals,
+          },
+        };
+      });
+      return setHouseholdChildMeal(householdId, date, childId, entry);
+    },
+    [householdId],
+  );
+
+  return { menu, loading, setMeal, setChildMeal };
 }

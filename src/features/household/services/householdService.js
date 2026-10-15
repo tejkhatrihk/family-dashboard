@@ -187,3 +187,13 @@ export async function updateMemberProfile(householdId, uid, changes) {
     changes,
   );
 }
+
+export async function setHouseholdChildrenMealPlansEnabled(
+  householdId,
+  enabled,
+) {
+  await updateDoc(doc(firestore, "households", householdId), {
+    childrenMealPlansEnabled: enabled,
+    updatedAt: serverTimestamp(),
+  });
+}
